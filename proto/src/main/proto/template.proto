@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package bytestorm;
+
+option java_package = "dev.bytestorm.proto";
+option java_multiple_files = true;
+option java_outer_classname = "TemplateProto";
+
+// Metadaten eines Templates; der Inhalt liegt als Ordner in `templates/` (§10).
+message TemplateInfo {
+  string name = 1;
+  string description = 2;
+  string hash = 3;
+  int64 last_modified = 4; // Epochen-Millis
+}
+
+message TemplateUpdated {
+  string template = 1;
+  string hash = 2;
+}

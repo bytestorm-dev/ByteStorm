@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package bytestorm;
+
+import "enums.proto";
+import "player.proto";
+
+option java_package = "dev.bytestorm.proto";
+option java_multiple_files = true;
+option java_outer_classname = "BridgeProto";
+
+// Handshake beim Verbindungsaufbau (§15). Die Major-Version muss
+// auf beiden Seiten identisch sein (§6.4).
+message BridgeHello {
+  int32 protocol_major = 1;
+  int32 protocol_minor = 2;
+  string service_id = 3;
+  string platform = 4;
+  string platform_version = 5;
+}
+
+message BridgeHelloAck {
+  bool accepted = 1;
+  int32 protocol_major = 2;
+  int32 protocol_minor = 3;
+  string reason = 4;
+}
+
+// Heartbeat hält den Service-Eintrag am Leben (§7). Läuft die TTL ab,
+// gilt der Service als verloren.
+message Heartbeat {
+  string service_id = 1;
+  ServiceState state = 2;
+  uint32 online_players = 3;
+  uint32 max_players = 4;
+  string motd = 5;
+  int64 time = 6; // Epochen-Millis
+}
+
+message PlayerSnapshot {
+  string service_id = 1;
+  repeated PlayerInfo players = 2;
+}

@@ -1,0 +1,7 @@
+name: ByteStormBridge
+version: ${version}
+main: dev.bytestorm.bridge.paper.PaperBridgePlugin
+api-version: '1.21'
+authors: [ByteStorm]
+description: Verbindet einen Paper-Service mit der ByteStorm-Cloud.
+folia-supported: true

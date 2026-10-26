@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package bytestorm;
+
+import "enums.proto";
+
+option java_package = "dev.bytestorm.proto";
+option java_multiple_files = true;
+option java_outer_classname = "ModuleProto";
+
+// Zustand eines optionalen Moduls (§16).
+message ModuleInfo {
+  string name = 1;
+  string version = 2;
+  bool enabled = 3;
+  ModuleState state = 4;
+}
+
+message ModuleStateChanged {
+  string name = 1;
+  ModuleState state = 2;
+}

@@ -1,0 +1,8 @@
+{
+  "id": "bytestorm-bridge",
+  "name": "ByteStormBridge",
+  "version": "${version}",
+  "description": "Verbindet einen Velocity-Proxy mit der ByteStorm-Cloud.",
+  "authors": ["ByteStorm"],
+  "main": "dev.bytestorm.bridge.velocity.VelocityBridgePlugin"
+}

@@ -1,0 +1,5 @@
+name: ByteStormBridge
+main: dev.bytestorm.bridge.bungeecord.BungeeBridgePlugin
+version: ${version}
+author: ByteStorm
+description: Verbindet einen BungeeCord-Proxy mit der ByteStorm-Cloud.

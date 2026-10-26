@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package bytestorm;
+
+import "enums.proto";
+import "scaling.proto";
+
+option java_package = "dev.bytestorm.proto";
+option java_multiple_files = true;
+option java_outer_classname = "GroupProto";
+
+// ServiceGroup-Definition (§9.1). Persistiert in MongoDB, gecacht in Redis.
+message ServiceGroup {
+  string name = 1;
+  ServiceType type = 2;
+  string platform = 3;
+  string version = 4;
+  ServiceMode mode = 5;
+  repeated string templates = 6;
+  uint32 min_services = 7;
+  uint32 max_services = 8;
+  uint32 max_players = 9;
+  uint32 memory = 10;          // MB
+  repeated string jvm_args = 11;
+  repeated string java_args = 12;
+  bool fallback = 13;
+  int32 fallback_priority = 14;
+  bool maintenance = 15;
+  map<string, string> properties = 16;
+  repeated ScalingRule scaling_rules = 17;
+
+  // Override der globalen Runtime (§9.1, §12).
+  optional RuntimeType runtime = 18;
+  // Abweichende Java-Version, siehe Risiko §23 (Java 26 vs. ältere MC-Versionen).
+  optional int32 java_version = 19;
+}
+
+message GroupUpdated {
+  string group = 1;
+}
+
+message GroupHealthChanged {
+  string group = 1;
+  GroupState state = 2;
+}

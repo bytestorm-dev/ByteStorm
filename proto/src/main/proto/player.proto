@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package bytestorm;
+
+option java_package = "dev.bytestorm.proto";
+option java_multiple_files = true;
+option java_outer_classname = "PlayerProto";
+
+// Live-Zustand eines Spielers. Liegt in Redis unter `bs:players` (§7).
+message PlayerInfo {
+  string uuid = 1;
+  string name = 2;
+  string proxy = 3;
+  string server = 4;
+}
+
+message PlayerJoined {
+  PlayerInfo player = 1;
+}
+
+message PlayerLeft {
+  PlayerInfo player = 1;
+}
+
+message PlayerCountChanged {
+  string service = 1;
+  uint32 online = 2;
+  uint32 max = 3;
+}
+
+// Aufforderung an einen Proxy, einen Spieler auf einen anderen Service zu schicken (§14, §17).
+// Läuft über denselben Kanal wie ExecuteCommand: bs:bridge:<service-id>:commands.
+message ConnectPlayerRequest {
+  string service = 1; // Ziel-Service (Proxy); muss zur Adresse des Topics passen
+  string player = 2;  // Spielername
+  string target = 3;  // Service, auf den der Spieler soll
+}
+
+// Aufforderung an einen Proxy, einen Spieler vom Netz zu trennen (§14, §17).
+message KickPlayerRequest {
+  string service = 1; // Ziel-Service (Proxy); muss zur Adresse des Topics passen
+  string player = 2;  // Spielername
+  string reason = 3;  // Begründung für den Spieler
+}

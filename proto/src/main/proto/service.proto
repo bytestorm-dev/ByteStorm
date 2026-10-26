@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package bytestorm;
+
+import "enums.proto";
+
+option java_package = "dev.bytestorm.proto";
+option java_multiple_files = true;
+option java_outer_classname = "ServiceProto";
+
+// Live-Zustand eines Services. Liegt in Redis unter `bs:services` (§7).
+message ServiceInfo {
+  string id = 1;              // UUID
+  string name = 2;            // Lobby-1
+  string group = 3;
+  string host = 4;
+  uint32 port = 5;
+  ServiceState state = 6;
+  uint32 online_players = 7;
+  uint32 max_players = 8;
+  map<string, string> properties = 9;
+  int64 started_at = 10;      // Epochen-Millis
+  RuntimeType runtime = 11;   // PROCESS | DOCKER
+  ServiceType type = 12;      // PROXY | SERVER, damit Proxies nur Server registrieren
+  bool fallback = 13;         // Gruppe ist Fallback-Ziel
+  int32 fallback_priority = 14; // kleinere Zahl gewinnt
+}
+
+message ServiceStateChanged {
+  ServiceInfo service = 1;
+  ServiceState previous = 2;
+}
+
+message ServiceCrashed {
+  ServiceInfo service = 1;
+  int32 exit_code = 2;
+  string reason = 3;
+  int64 time = 4;             // Epochen-Millis
+  repeated string log_tail = 5;
+  string report_path = 6;
+}
+
+message StartServiceRequest {
+  string group = 1;
+  map<string, string> properties = 2;
+}
+
+message StartServiceResponse {
+  bool success = 1;
+  ServiceInfo service = 2;
+  string error = 3;
+}
+
+message StopServiceRequest {
+  string service = 1;
+  bool force = 2;
+}
+
+message ExecuteCommand {
+  string service = 1;
+  string command = 2;
+}
+
+message CommandResult {
+  bool success = 1;
+  string output = 2;
+  string error = 3;
+}
+
+message LogLine {
+  string service = 1;
+  int64 time = 2;
+  string line = 3;
+}

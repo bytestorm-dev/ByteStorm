@@ -1,0 +1,355 @@
+package dev.bytestorm.cli;
+
+import dev.bytestorm.controller.group.GroupManager;
+import dev.bytestorm.controller.group.GroupScaler;
+import dev.bytestorm.controller.scaling.ScalingDecision;
+import dev.bytestorm.core.config.PortSettings;
+import dev.bytestorm.core.mongo.repository.GroupStore;
+import dev.bytestorm.core.redis.GroupCache;
+import dev.bytestorm.proto.RuntimeType;
+import dev.bytestorm.proto.ServiceGroup;
+import dev.bytestorm.proto.ServiceMode;
+import dev.bytestorm.proto.ServiceType;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class GroupCommandLineTest {
+
+    private final Map<String, ServiceGroup> stored = new LinkedHashMap<>();
+    private final List<String> templates = new ArrayList<>(List.of("ALL", "Lobby", "Survival"));
+
+    private GroupCommandLine cli;
+
+    @BeforeEach
+    void setUp() {
+        cli = new GroupCommandLine(manager());
+    }
+
+    @Test
+    void withoutASubcommandTheUsageIsShown() {
+        assertTrue(cli.execute("group".split("\\s+")).contains("group create"));
+        assertTrue(cli.execute("group help".split("\\s+")).contains("--fallback"));
+    }
+
+    @Test
+    void createUsesDefaults() {
+        String output = execute("group create Lobby --platform paper");
+
+        assertTrue(output.contains("Gruppe 'Lobby' angelegt"), output);
+        assertTrue(output.contains("SERVER"), output);
+        assertTrue(output.contains("min 1 / max 1"), output);
+        ServiceGroup group = stored.get("Lobby");
+        assertEquals("paper", group.getPlatform());
+        assertEquals(ServiceType.SERVER, group.getType());
+        assertEquals(ServiceMode.DYNAMIC, group.getMode());
+        assertEquals(1, group.getMinServices());
+        assertEquals(1, group.getMaxServices());
+        assertEquals(100, group.getMaxPlayers());
+        assertEquals(1024, group.getMemory());
+    }
+
+    @Test
+    void createAppliesAllOptions() {
+        execute("group create Survival --platform paper --version 1.21.4 --mode STATIC --min 2 --max 5"
+                + " --max-players 200 --memory 4096 --template ALL --template Survival --fallback"
+                + " --fallback-priority 3 --java-version 21 --runtime DOCKER"
+                + " --jvm-arg -XX:+UseZGC --java-arg --nogui");
+
+        ServiceGroup group = stored.get("Survival");
+        assertEquals("1.21.4", group.getVersion());
+        assertEquals(ServiceMode.STATIC, group.getMode());
+        assertEquals(2, group.getMinServices());
+        assertEquals(5, group.getMaxServices());
+        assertEquals(200, group.getMaxPlayers());
+        assertEquals(4096, group.getMemory());
+        assertEquals(List.of("ALL", "Survival"), group.getTemplatesList());
+        assertTrue(group.getFallback());
+        assertEquals(3, group.getFallbackPriority());
+        assertEquals(21, group.getJavaVersion());
+        assertEquals(RuntimeType.DOCKER, group.getRuntime());
+        assertEquals(List.of("-XX:+UseZGC"), group.getJvmArgsList());
+        assertEquals(List.of("--nogui"), group.getJavaArgsList());
+    }
+
+    @Test
+    void invalidInputIsReportedPerProblem() {
+        assertTrue(execute("group create Lobby").contains("platform ist Pflicht"));
+        assertTrue(execute("group create Lobby --platform ").contains("Wert fehlt"));
+        assertTrue(execute("group create Lobby --platform paper --type KUBERNETES")
+                .contains("Ungültiger Wert für --type"));
+        assertTrue(execute("group create Lobby --platform paper --min viele")
+                .contains("Ungültiger Wert für --min"));
+        assertTrue(execute("group create Lobby --platform paper --farbe rot")
+                .contains("Unbekannte Option: --farbe"));
+        assertTrue(execute("group create Lobby --platform paper zusatz")
+                .contains("Unerwartetes Argument"));
+        assertTrue(execute("group create 'Lobby 1' --platform paper").contains("Fehler"));
+    }
+
+    @Test
+    void createRejectsDuplicateNames() {
+        execute("group create Lobby --platform paper");
+
+        assertTrue(execute("group create Lobby --platform paper").contains("existiert bereits"));
+    }
+
+    @Test
+    void editChangesOnlyTheGivenOptions() {
+        execute("group create Lobby --platform paper --template ALL --fallback");
+
+        String output = execute("group edit Lobby --max 4");
+
+        assertTrue(output.contains("aktualisiert"), output);
+        ServiceGroup group = stored.get("Lobby");
+        assertEquals(4, group.getMaxServices());
+        assertEquals(1, group.getMinServices(), "nicht genannte Optionen bleiben");
+        assertEquals("paper", group.getPlatform());
+        assertEquals(List.of("ALL"), group.getTemplatesList());
+        assertTrue(group.getFallback());
+    }
+
+    @Test
+    void editReplacesTemplatesOnlyWhenGiven() {
+        execute("group create Lobby --platform paper --template ALL");
+
+        execute("group edit Lobby --template Survival");
+
+        assertEquals(List.of("Survival"), stored.get("Lobby").getTemplatesList());
+    }
+
+    @Test
+    void editAndDeleteReportUnknownGroups() {
+        assertTrue(execute("group edit Fehlt --max 2").contains("Unbekannte Gruppe: Fehlt"));
+        assertTrue(execute("group delete Fehlt").contains("Unbekannte Gruppe: Fehlt"));
+    }
+
+    @Test
+    void deleteRemovesTheGroup() {
+        execute("group create Lobby --platform paper");
+
+        String output = execute("group delete Lobby");
+
+        assertTrue(output.contains("gelöscht"), output);
+        assertFalse(stored.containsKey("Lobby"));
+    }
+
+    @Test
+    void listShowsAllGroupsWithTheirSettings() {
+        assertTrue(execute("group list").contains("Keine Gruppen definiert"));
+        execute("group create Lobby --platform paper --max 3 --fallback --fallback-priority 1");
+        execute("group create Proxy --platform velocity --type PROXY");
+
+        String output = execute("group list");
+
+        assertTrue(output.contains("Name\tTyp\tPlattform"), output);
+        assertTrue(output.contains("Lobby\tSERVER\tpaper"), output);
+        assertTrue(output.contains("ja (1)"), output);
+        assertTrue(output.contains("Proxy\tPROXY\tvelocity"), output);
+    }
+
+    @Test
+    void infoShowsTheDetailsOfAGroup() {
+        execute("group create Lobby --platform paper --template Lobby --fallback --max-players 250"
+                + " --memory 2048 --runtime DOCKER");
+
+        String output = execute("group info Lobby");
+
+        assertTrue(output.contains("Plattform: paper (neueste)"), output);
+        assertTrue(output.contains("Spieler je Service: 250"), output);
+        assertTrue(output.contains("Speicher: 2048 MB"), output);
+        assertTrue(output.contains("Fallback: ja (Priorität 0)"), output);
+        assertTrue(output.contains("Templates: Lobby"), output);
+        assertTrue(output.contains("Runtime: DOCKER"), output);
+        assertTrue(execute("group info Fehlt").contains("Unbekannte Gruppe: Fehlt"));
+    }
+
+    @Test
+    void maintenanceTogglesTheMode() {
+        execute("group create Lobby --platform paper");
+
+        assertTrue(execute("maintenance Lobby on").contains("Wartungsmodus aktiv"));
+        assertTrue(stored.get("Lobby").getMaintenance());
+        assertTrue(execute("maintenance Lobby off").contains("Wartungsmodus aus"));
+        assertFalse(stored.get("Lobby").getMaintenance());
+        assertTrue(execute("maintenance Lobby maybe").contains("Erwartet 'on' oder 'off'"));
+        assertTrue(execute("maintenance Lobby").contains("Verwendung: maintenance"));
+        assertTrue(execute("maintenance Fehlt on").contains("existiert nicht"));
+    }
+
+    @Test
+    void scaleAsksTheScalerAndReportsTheResult() {
+        execute("group create Lobby --platform paper");
+        ScalingRecorder scaler = new ScalingRecorder();
+        scaler.decisions = List.of(
+                new ScalingDecision("Lobby", ScalingDecision.Action.START, "manual", 1, 2, "manuell auf 2 skaliert"),
+                new ScalingDecision("Lobby", ScalingDecision.Action.START, "manual", 2, 3, "manuell auf 3 skaliert"));
+        GroupCommandLine withScaler = new GroupCommandLine(manager(), scaler);
+
+        String output = withScaler.execute("group scale Lobby 3".split("\\s+"));
+
+        assertEquals("Lobby", scaler.group);
+        assertEquals(3, scaler.target);
+        assertTrue(output.contains("Gruppe 'Lobby': Ziel 3 — 2 gestartet, 0 gestoppt."), output);
+        assertTrue(output.contains("START 1 -> 2: manuell auf 2 skaliert"), output);
+    }
+
+    @Test
+    void scaleHintsAtTheMinimumItUndercuts() {
+        execute("group create Lobby --platform paper --min 3 --max 3");
+        ScalingRecorder scaler = new ScalingRecorder();
+        scaler.decisions = List.of(new ScalingDecision("Lobby", ScalingDecision.Action.STOP,
+                "manual", 3, 2, "manuell auf 2 skaliert"));
+        GroupCommandLine withScaler = new GroupCommandLine(manager(), scaler);
+
+        String output = withScaler.execute("group scale Lobby 2".split("\\s+"));
+
+        assertTrue(output.contains("1 gestoppt"), output);
+        assertTrue(output.contains("unter minServices (3)"), output);
+    }
+
+    @Test
+    void scaleReportsMissingArgumentsAndUnknownGroups() {
+        execute("group create Lobby --platform paper");
+        ScalingRecorder scaler = new ScalingRecorder();
+        scaler.failure = new IllegalArgumentException("Unbekannte Gruppe: Fehlt");
+        GroupCommandLine withScaler = new GroupCommandLine(manager(), scaler);
+
+        assertTrue(withScaler.execute("group scale Lobby".split("\\s+"))
+                .startsWith("Verwendung: group scale"));
+        assertTrue(withScaler.execute("group scale Lobby drei".split("\\s+"))
+                .startsWith("Fehler: Ungültiger Wert für --anzahl"));
+        assertTrue(withScaler.execute("group scale Fehlt 2".split("\\s+"))
+                .startsWith("Fehler: Unbekannte Gruppe: Fehlt"));
+    }
+
+    @Test
+    void scaleIsUnavailableWithoutAScaler() {
+        execute("group create Lobby --platform paper");
+
+        assertTrue(execute("group scale Lobby 2").contains("nicht verfügbar"));
+    }
+
+    @Test
+    void namesAreAvailableForCompletion() {
+        execute("group create Lobby --platform paper");
+        execute("group create Survival --platform paper");
+
+        assertEquals(List.of("Lobby", "Survival"), cli.names());
+    }
+
+    @Test
+    void serviceCommandLineRoutesGroupCommands() {
+        ServiceCommandLine line = new ServiceCommandLine(new ServiceCommandLineTest.FakeController(), cli);
+        execute("group create Lobby --platform paper");
+
+        assertTrue(line.execute("group list").contains("Lobby"));
+        assertTrue(line.execute("maintenance Lobby on").contains("Wartungsmodus aktiv"));
+        assertEquals(List.of("Lobby"), line.groupNames());
+        assertTrue(line.execute("help").contains("maintenance <name> on|off"));
+    }
+
+    @Test
+    void groupCommandsAreUnavailableWithoutAManager() {
+        ServiceCommandLine line = new ServiceCommandLine(new ServiceCommandLineTest.FakeController());
+
+        assertTrue(line.execute("group list").contains("nicht verfügbar"));
+        assertTrue(line.groupNames().isEmpty());
+    }
+
+    private String execute(String line) {
+        return cli.execute(line.trim().split("\\s+"));
+    }
+
+    private GroupManager manager() {
+        return new GroupManager(new FakeStore(), new FakeCache(),
+                new PortSettings(25565, 30000), templates::contains);
+    }
+
+    /**
+     * Merkt sich den Aufruf und liefert vorbereitete Entscheidungen oder einen Fehler.
+     */
+    private static final class ScalingRecorder implements GroupScaler {
+
+        private List<ScalingDecision> decisions = List.of();
+        private RuntimeException failure;
+        private String group;
+        private int target;
+
+        @Override
+        public List<ScalingDecision> scaleTo(String group, int target) {
+            this.group = group;
+            this.target = target;
+            if (failure != null) {
+                throw failure;
+            }
+            return decisions;
+        }
+    }
+
+    private final class FakeStore implements GroupStore {
+
+        @Override
+        public List<ServiceGroup> findAll() {
+            return List.copyOf(stored.values());
+        }
+
+        @Override
+        public Optional<ServiceGroup> find(String name) {
+            return Optional.ofNullable(stored.get(name));
+        }
+
+        @Override
+        public void upsert(ServiceGroup group) {
+            stored.put(group.getName(), group);
+        }
+
+        @Override
+        public boolean delete(String name) {
+            return stored.remove(name) != null;
+        }
+
+        @Override
+        public boolean setMaintenance(String name, boolean maintenance) {
+            ServiceGroup group = stored.get(name);
+            if (group == null) {
+                return false;
+            }
+            stored.put(name, group.toBuilder().setMaintenance(maintenance).build());
+            return true;
+        }
+    }
+
+    private static final class FakeCache implements GroupCache {
+
+        @Override
+        public Optional<ServiceGroup> get(String name) {
+            return Optional.empty();
+        }
+
+        @Override
+        public void put(ServiceGroup group) {
+            // kein Cache im Test
+        }
+
+        @Override
+        public boolean invalidate(String name) {
+            return false;
+        }
+
+        @Override
+        public void clear() {
+            // kein Cache im Test
+        }
+    }
+}

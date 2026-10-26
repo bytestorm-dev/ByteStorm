@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package bytestorm;
+
+option java_package = "dev.bytestorm.proto";
+option java_multiple_files = true;
+option java_outer_classname = "ScalingProto";
+
+// Scaling-Regel einer Gruppe (§11). Pro Gruppe können mehrere Regeln aktiv sein.
+message ScalingRule {
+  string id = 1;
+  bool enabled = 2;
+
+  oneof rule {
+    PlayerCountRule player_count = 10;
+    ScheduleRule schedule = 11;
+    LoadRule load = 12;
+  }
+}
+
+// Auslastung > scale_up_utilization startet Services,
+// Leerlauf < idle_utilization für idle_minutes stoppt sie.
+message PlayerCountRule {
+  double scale_up_utilization = 1;
+  uint32 scale_up_services = 2;
+  double idle_utilization = 3;
+  uint32 idle_minutes = 4;
+}
+
+// Cron-artige Regel, z. B. mindestens 3 Services von 18–23 Uhr.
+message ScheduleRule {
+  string cron = 1;
+  string timezone = 2;
+  uint32 min_services = 3;
+  uint32 max_services = 4;
+}
+
+// Host-Last: kein Start, wenn der Host über der Schwelle liegt.
+message LoadRule {
+  double max_host_cpu = 1;
+  double max_host_memory = 2;
+  uint32 min_services = 3;
+}

@@ -1,0 +1,87 @@
+name: Build und Release
+
+# Jeder Push auf den Hauptbranch baut das gesamte Projekt und veröffentlicht die
+# Distribution. Endet die Version in gradle.properties auf SNAPSHOT, entsteht ein
+# Beta-Release (GitHub-Prerelease), sonst ein öffentlicher Release.
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Je Branch läuft nur ein Release; ein neuer Push bricht den laufenden Build nicht
+# ab, damit nie ein halb hochgeladenes Release entsteht.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Bauen und veröffentlichen
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      # Gradle selbst läuft auf JDK 25; die Toolchain (JDK 26, siehe
+      # gradle/libs.versions.toml) lädt Gradle bei Bedarf selbst nach.
+      - name: JDK einrichten
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Version lesen
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version=//p' gradle.properties | head -n1 | tr -d '[:space:]')"
+          if [ -z "$version" ]; then
+            echo "::error::Keine version=... in gradle.properties gefunden"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *SNAPSHOT*)
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+              echo "title=ByteStorm $version (Beta)" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              echo "title=ByteStorm $version" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Alles bauen und testen
+        run: ./gradlew build --stacktrace
+
+      - name: Distribution packen
+        run: ./gradlew :launcher:distributionZip
+
+      - name: Release veröffentlichen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          TITLE: ${{ steps.version.outputs.title }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          asset="launcher/build/distributions/bytestorm-$VERSION.zip"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # Dieselbe Version wurde erneut gebaut: Release aktualisieren und das
+            # Artefakt ersetzen, statt am vorhandenen Tag zu scheitern.
+            gh release edit "$tag" --title "$TITLE" --prerelease="$PRERELEASE"
+            gh release upload "$tag" "$asset" --clobber
+          elif [ "$PRERELEASE" = "true" ]; then
+            gh release create "$tag" "$asset" --title "$TITLE" --target "$GITHUB_SHA" \
+              --generate-notes --prerelease
+          else
+            gh release create "$tag" "$asset" --title "$TITLE" --target "$GITHUB_SHA" \
+              --generate-notes
+          fi

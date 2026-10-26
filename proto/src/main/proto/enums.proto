@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package bytestorm;
+
+option java_package = "dev.bytestorm.proto";
+option java_multiple_files = true;
+option java_outer_classname = "EnumsProto";
+
+// Lebenszyklus eines Services (§9.2).
+enum ServiceState {
+  PREPARING = 0; // Ordner aufbauen, Templates kopieren
+  STARTING = 1;  // Prozess/Container läuft, Bridge noch nicht ready
+  ONLINE = 2;    // Bridge hat `ready` gemeldet
+  STOPPING = 3;  // Graceful Stop läuft
+  STOPPED = 4;   // regulär beendet
+  CRASHED = 5;   // unerwartet beendet
+}
+
+// Rolle einer Gruppe (§9.1).
+enum ServiceType {
+  PROXY = 0;
+  SERVER = 1;
+}
+
+// Dynamische Services werden aus Templates gebaut und verworfen,
+// statische bleiben persistent (§9.3, §9.4).
+enum ServiceMode {
+  DYNAMIC = 0;
+  STATIC = 1;
+}
+
+// Gesundheit einer Gruppe, u. a. nach erschöpften Restart-Versuchen (§12.5).
+enum GroupState {
+  HEALTHY = 0;
+  DEGRADED = 1;
+  MAINTENANCE = 2;
+}
+
+// Laufzeit eines Services (§12).
+enum RuntimeType {
+  PROCESS = 0;
+  DOCKER = 1;
+}
+
+// Zustand eines optionalen Moduls (§16).
+enum ModuleState {
+  LOADED = 0;
+  ENABLED = 1;
+  DISABLED = 2;
+  FAILED = 3;
+}
