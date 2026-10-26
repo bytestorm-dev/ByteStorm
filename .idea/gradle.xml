@@ -1,9 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="GradleMigrationSettings" migrationVersion="1" />
   <component name="GradleSettings">
     <option name="linkedExternalProjectsSettings">
       <GradleProjectSettings>
         <option name="externalProjectPath" value="$PROJECT_DIR$" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$" />
+            <option value="$PROJECT_DIR$/api" />
+            <option value="$PROJECT_DIR$/bridge" />
+            <option value="$PROJECT_DIR$/bridge/bridge-bungeecord" />
+            <option value="$PROJECT_DIR$/bridge/bridge-common" />
+            <option value="$PROJECT_DIR$/bridge/bridge-paper" />
+            <option value="$PROJECT_DIR$/bridge/bridge-velocity" />
+            <option value="$PROJECT_DIR$/cli" />
+            <option value="$PROJECT_DIR$/codec" />
+            <option value="$PROJECT_DIR$/controller" />
+            <option value="$PROJECT_DIR$/core" />
+            <option value="$PROJECT_DIR$/launcher" />
+            <option value="$PROJECT_DIR$/modules" />
+            <option value="$PROJECT_DIR$/modules/module-discord" />
+            <option value="$PROJECT_DIR$/modules/module-rest" />
+            <option value="$PROJECT_DIR$/node" />
+            <option value="$PROJECT_DIR$/proto" />
+          </set>
+        </option>
         <option name="myGradleHome" value="" />
       </GradleProjectSettings>
     </option>
