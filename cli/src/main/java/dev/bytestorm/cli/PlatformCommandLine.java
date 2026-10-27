@@ -99,7 +99,7 @@ public final class PlatformCommandLine {
         String lower = command.toLowerCase(Locale.ROOT);
         return switch (lower) {
             case "" , "list" -> list();
-            case "help", "-h", "--help" -> USAGE.stripTrailing();
+            case "help", "-h", "--help" -> Theme.help(USAGE.stripTrailing());
             case "tasks", "status" -> tasks(argument);
             case "info" -> info(argument);
             case "versions", "available" -> versions(argument);
@@ -113,21 +113,21 @@ public final class PlatformCommandLine {
     }
 
     private static String unknown(String command) {
-        return "Unbekanntes Plattform-Kommando: " + command + " (platform help)";
+        return Theme.warn("Unbekanntes Plattform-Kommando: " + command + " (platform help)");
     }
 
     private String list() {
         List<PlatformJar> jars = local();
+        String nl = System.lineSeparator();
         if (jars.isEmpty()) {
-            return "Keine Plattform-Jars in " + directory
-                    + System.lineSeparator() + "Laden mit 'platform install <platform> [version]'.";
+            return Theme.dim("Keine Plattform-Jars in " + directory) + nl
+                    + Theme.dim("Laden mit 'platform install <platform> [version]'.");
         }
-        StringJoiner out = new StringJoiner(System.lineSeparator());
-        out.add("Datei\tPlattform\tGröße\tGeändert");
+        Table table = Table.of("Datei", "Plattform", "Version", "Größe", "Geändert");
         for (PlatformJar jar : jars) {
-            out.add(jar.fileName() + "\t" + jar.platform() + "\t" + size(jar) + "\t" + changed(jar.file()));
+            table.row(Theme.bold(jar.fileName()), jar.platform(), jar.version(), size(jar), changed(jar.file()));
         }
-        return out.toString();
+        return table.render();
     }
 
     /**
@@ -148,11 +148,10 @@ public final class PlatformCommandLine {
             platforms.add(jar.platform());
         }
         if (platforms.isEmpty()) {
-            return "Keine Plattform bekannt — 'platform install <platform> [version]' lädt eine.";
+            return Theme.dim("Keine Plattform bekannt — 'platform install <platform> [version]' lädt eine.");
         }
 
-        StringJoiner out = new StringJoiner(System.lineSeparator());
-        out.add("Plattform\tLokal\tVerfügbar\tAufgabe");
+        Table table = Table.of("Plattform", "Lokal", "Verfügbar", "Aufgabe");
         for (String name : platforms) {
             Optional<String> newest = newestVersion(name);
             String localVersions = jars.stream()
@@ -164,85 +163,86 @@ public final class PlatformCommandLine {
             String available = newest.orElse("—");
             String task;
             if (localVersions.equals("—")) {
-                task = newest.isPresent() ? "installieren" : "nicht verfügbar";
+                task = newest.isPresent() ? Theme.cyan("installieren") : Theme.dim("nicht verfügbar");
             } else if (newest.isEmpty()) {
-                task = "nicht prüfbar";
+                task = Theme.dim("nicht prüfbar");
             } else if (localVersions.equals(newest.get())) {
-                task = "aktuell";
+                task = Theme.green("aktuell");
             } else {
-                task = "aktualisieren";
+                task = Theme.yellow("aktualisieren");
             }
-            out.add(name + "\t" + localVersions + "\t" + available + "\t" + task);
+            table.row(Theme.bold(name), localVersions, available, task);
         }
-        return out.toString();
+        return table.render();
     }
 
     private String info(String platform) {
         if (platform == null || platform.isBlank()) {
-            return "Plattform fehlt (platform info <platform>)";
+            return Theme.warn("Plattform fehlt (platform info <platform>)");
         }
         List<PlatformJar> jars = local().stream()
                 .filter(jar -> jar.platform().equalsIgnoreCase(platform))
                 .toList();
+        String nl = System.lineSeparator();
         StringBuilder out = new StringBuilder();
-        out.append("Plattform: ").append(platform.toLowerCase(Locale.ROOT)).append(System.lineSeparator());
-        out.append("Verzeichnis: ").append(directory).append(System.lineSeparator());
+        out.append(Theme.field("Plattform", Theme.bold(platform.toLowerCase(Locale.ROOT)))).append(nl);
+        out.append(Theme.field("Verzeichnis", directory.toString())).append(nl);
         if (jars.isEmpty()) {
-            out.append("Lokal: keine Jar");
+            out.append(Theme.field("Lokal", Theme.dim("keine Jar")));
         } else {
-            out.append("Lokal:");
+            out.append(Theme.dim("Lokal:"));
             for (PlatformJar jar : jars) {
-                out.append(System.lineSeparator()).append("  ").append(jar.fileName())
-                        .append(" (").append(size(jar)).append(", ").append(changed(jar.file())).append(")");
+                out.append(nl).append("  ").append(Theme.tick()).append(' ').append(Theme.bold(jar.fileName()))
+                        .append(Theme.dim(" (" + size(jar) + ", " + changed(jar.file()) + ")"));
             }
         }
-        out.append(System.lineSeparator());
+        out.append(nl);
         Optional<String> newest = newestVersion(platform);
-        out.append("Verfügbar: ").append(newest.orElse("nicht abfragbar"));
+        out.append(Theme.field("Verfügbar", newest.orElse("nicht abfragbar")));
         return out.toString();
     }
 
     private String versions(String platform) {
         if (platform == null || platform.isBlank()) {
-            return "Plattform fehlt (platform versions <platform>)";
+            return Theme.warn("Plattform fehlt (platform versions <platform>)");
         }
         List<String> available;
         try {
             available = versions.versions(platform);
         } catch (RuntimeException e) {
-            return "Fehler: " + messageOf(e);
+            return Theme.fail("Fehler: " + messageOf(e));
         }
         if (available.isEmpty()) {
-            return "Keine Versionen für '" + platform + "' gefunden.";
+            return Theme.warn("Keine Versionen für '" + platform + "' gefunden.");
         }
         List<String> shown = available.size() > VERSION_LIMIT
                 ? available.subList(0, VERSION_LIMIT)
                 : available;
         StringJoiner out = new StringJoiner(System.lineSeparator());
-        out.add("Versionen für " + platform.toLowerCase(Locale.ROOT) + " (neueste zuerst):");
+        out.add(Theme.section("Versionen für " + platform.toLowerCase(Locale.ROOT) + " (neueste zuerst)"));
         // Eine Version je Zeile; das hält lange Listen mit den folgenden Details lesbar.
         for (String version : shown) {
             out.add("  " + version);
         }
         if (available.size() > shown.size()) {
-            out.add("  … " + (available.size() - shown.size()) + " weitere");
+            out.add(Theme.dim("  … " + (available.size() - shown.size()) + " weitere"));
         }
         return out.toString();
     }
 
     private String install(String platform, String version) {
         if (platform == null || platform.isBlank()) {
-            return "Plattform fehlt (platform install <platform> [version])";
+            return Theme.warn("Plattform fehlt (platform install <platform> [version])");
         }
         if (!platform.matches(SAFE_NAME.pattern())) {
-            return "Ungültige Plattform: " + platform;
+            return Theme.warn("Ungültige Plattform: " + platform);
         }
         try {
             Path jar = installer.install(platform, version);
-            return "Geladen: " + jar.getFileName()
-                    + (version == null || version.isBlank() ? " (neueste stabile Version)" : "");
+            return Theme.ok("Geladen: " + jar.getFileName()
+                    + (version == null || version.isBlank() ? " (neueste stabile Version)" : ""));
         } catch (RuntimeException e) {
-            return "Fehler: " + messageOf(e);
+            return Theme.fail("Fehler: " + messageOf(e));
         }
     }
 
@@ -257,7 +257,7 @@ public final class PlatformCommandLine {
             }
         }
         if (platforms.isEmpty()) {
-            return "Keine Plattform-Jars vorhanden — 'platform install <platform>' lädt eine.";
+            return Theme.warn("Keine Plattform-Jars vorhanden — 'platform install <platform>' lädt eine.");
         }
 
         StringJoiner out = new StringJoiner(System.lineSeparator());
@@ -266,25 +266,25 @@ public final class PlatformCommandLine {
             try {
                 newest = newestVersion(name);
             } catch (RuntimeException e) {
-                out.add(name + ": nicht prüfbar — " + messageOf(e));
+                out.add(Theme.warn(name + ": nicht prüfbar — " + messageOf(e)));
                 continue;
             }
             if (newest.isEmpty()) {
-                out.add(name + ": keine stabile Version verfügbar");
+                out.add(Theme.warn(name + ": keine stabile Version verfügbar"));
                 continue;
             }
             String available = newest.get();
             boolean upToDate = jars.stream()
                     .anyMatch(jar -> jar.platform().equalsIgnoreCase(name) && jar.version().equals(available));
             if (upToDate) {
-                out.add(name + ": aktuell (" + available + ")");
+                out.add(Theme.ok(name + ": aktuell (" + available + ")"));
                 continue;
             }
             try {
                 Path jar = installer.install(name, available);
-                out.add(name + ": " + available + " geladen (" + jar.getFileName() + ")");
+                out.add(Theme.ok(name + ": " + available + " geladen (" + jar.getFileName() + ")"));
             } catch (RuntimeException e) {
-                out.add(name + ": Fehler — " + messageOf(e));
+                out.add(Theme.fail(name + ": Fehler — " + messageOf(e)));
             }
         }
         return out.toString();

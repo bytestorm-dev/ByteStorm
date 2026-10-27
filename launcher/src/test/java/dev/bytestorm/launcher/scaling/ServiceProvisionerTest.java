@@ -17,6 +17,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -65,6 +66,36 @@ class ServiceProvisionerTest {
         assertEquals(List.of("nogui"), definition.options().javaArgs());
         assertEquals(RuntimeType.DOCKER, definition.options().runtime());
         assertEquals(21, definition.options().javaVersion());
+    }
+
+    @Test
+    void propertiesOfAStartOverrideThoseOfTheGroup() throws Exception {
+        CloudLayout layout = layout();
+        Files.createFile(layout.platforms().resolve("paper.jar"));
+        ServiceGroup group = ServiceGroup.newBuilder()
+                .setName("Lobby")
+                .setPlatform("paper")
+                .putProperties("template", "lobby")
+                .putProperties("motd", "Willkommen")
+                .build();
+        AtomicReference<ServiceDefinition> started = new AtomicReference<>();
+        ServiceProvisioner provisioner = provisioner(layout, group, name -> false,
+                (name, used) -> 1, started::set);
+
+        provisioner.start("Lobby", Map.of("template", "event", "event", "sommer"));
+
+        assertEquals(Map.of("template", "event", "motd", "Willkommen", "event", "sommer"),
+                started.get().group().getPropertiesMap());
+        assertEquals("lobby", group.getPropertiesOrThrow("template"),
+                "die gecachte Gruppe bleibt unverändert");
+
+        provisioner.start("Lobby");
+        assertEquals(group, started.get().group(), "ohne Properties gilt allein die Gruppe");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> provisioner.start("Lobby", Map.of(" ", "leer")));
+        assertThrows(IllegalArgumentException.class,
+                () -> provisioner.start("Lobby", java.util.Collections.singletonMap("leer", null)));
     }
 
     @Test

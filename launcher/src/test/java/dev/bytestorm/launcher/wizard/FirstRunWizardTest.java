@@ -5,6 +5,7 @@ import dev.bytestorm.core.config.ConfigLoader;
 import dev.bytestorm.core.config.MongoSettings;
 import dev.bytestorm.core.config.PortSettings;
 import dev.bytestorm.core.config.RedisSettings;
+import dev.bytestorm.core.mongo.model.ModuleConfig;
 import dev.bytestorm.proto.RuntimeType;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -34,6 +36,7 @@ class FirstRunWizardTest {
     private final List<MongoSettings> mongoChecks = new ArrayList<>();
     private final List<RedisSettings> redisChecks = new ArrayList<>();
     private final List<MongoSettings> groupCalls = new ArrayList<>();
+    private final List<ModuleConfig> moduleCalls = new ArrayList<>();
     private final AtomicInteger mongoFailures = new AtomicInteger();
     private final AtomicInteger redisFailures = new AtomicInteger();
     private boolean groupCreationFails;
@@ -63,6 +66,69 @@ class FirstRunWizardTest {
         assertEquals(loaded.mongo(), groupCalls.get(0));
         assertTrue(io.messages().stream().anyMatch(message -> message.contains("Konfiguration gespeichert")));
         assertTrue(io.messages().stream().anyMatch(message -> message.contains("Standardgruppen")));
+        assertTrue(moduleCalls.isEmpty(), "ohne aktiviertes Modul entsteht keine Modul-Konfiguration");
+    }
+
+    @Test
+    void anEnabledRestModuleIsConfiguredWithKeyHostAndPort() throws Exception {
+        ScriptedWizardIo io = minimalAnswers()
+                .answer("REST-Modul", "j")
+                .answer("REST-Host", "")
+                .answer("REST-Port", "8099")
+                .answer("REST-API-Key", "geheim-geheim-1234")
+                .answer("Discord-Modul", "n");
+
+        CloudConfig config = wizard(io).run(temp);
+
+        assertTrue(config.modules().rest());
+        assertEquals(1, moduleCalls.size());
+        ModuleConfig rest = moduleCalls.get(0);
+        assertEquals("rest", rest.name());
+        assertTrue(rest.enabled(), "das Modul wird als aktiviert hinterlegt");
+        assertEquals(Map.of("host", "0.0.0.0", "port", "8099", "apiKey", "geheim-geheim-1234"),
+                Map.copyOf(rest.settings()));
+        // Der Key geht nur nach MongoDB — nie in eine Ausgabe (§20).
+        assertTrue(io.messages().stream().noneMatch(message -> message.contains("geheim-geheim-1234")),
+                io.messages().toString());
+        assertTrue(io.messages().stream().anyMatch(message -> message.contains("Modul-Konfiguration")),
+                io.messages().toString());
+        // Die Modul-Fragen kommen direkt nach der Aktivierung, vor allen weiteren.
+        List<String> asked = io.asked();
+        int restQuestion = asked.indexOf("REST-Modul aktivieren?");
+        List<String> restQuestions = asked.subList(restQuestion, restQuestion + 4);
+        assertEquals("REST-Modul aktivieren?", restQuestions.get(0));
+        assertEquals("REST-Host", restQuestions.get(1));
+        assertEquals("REST-Port", restQuestions.get(2));
+        assertEquals("REST-API-Key (mindestens 8 Zeichen)", restQuestions.get(3));
+    }
+
+    @Test
+    void aShortRestKeyIsAskedAgainAndTheLongOneIsUsed() throws Exception {
+        ScriptedWizardIo io = minimalAnswers()
+                .answer("REST-Modul", "j")
+                .answer("REST-Host", "127.0.0.1")
+                .answer("REST-Port", "")
+                .answer("REST-API-Key", "kurz", "geheim-geheim-1234")
+                .answer("Discord-Modul", "n");
+
+        wizard(io).run(temp);
+
+        assertTrue(io.messages().stream().anyMatch(message -> message.contains("mindestens 8 Zeichen")),
+                io.messages().toString());
+        assertEquals(Map.of("host", "127.0.0.1", "port", "8080", "apiKey", "geheim-geheim-1234"),
+                Map.copyOf(moduleCalls.get(0).settings()));
+    }
+
+    @Test
+    void anEnabledDiscordModuleIsStoredWithoutSettings() throws Exception {
+        ScriptedWizardIo io = minimalAnswers().answer("Discord-Modul", "j");
+
+        wizard(io).run(temp);
+
+        assertEquals(1, moduleCalls.size());
+        assertEquals("discord", moduleCalls.get(0).name());
+        assertTrue(moduleCalls.get(0).enabled());
+        assertEquals(Map.of(), Map.copyOf(moduleCalls.get(0).settings()));
     }
 
     @Test
@@ -218,6 +284,6 @@ class FirstRunWizardTest {
             if (groupCreationFails) {
                 throw new IllegalStateException("keine Rechte");
             }
-        });
+        }, (settings, modules) -> moduleCalls.addAll(modules));
     }
 }

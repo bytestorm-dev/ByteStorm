@@ -6,6 +6,7 @@ import dev.bytestorm.api.module.ModuleContext;
 import dev.bytestorm.core.mongo.model.ModuleConfig;
 import dev.bytestorm.proto.ModuleInfo;
 import dev.bytestorm.proto.ModuleState;
+import dev.bytestorm.proto.ModuleStateChanged;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -27,13 +28,15 @@ class ModuleManagerTest {
 
     private final Map<String, ModuleConfig> stored = new LinkedHashMap<>();
     private final List<String> calls = new ArrayList<>();
+    private final List<String> events = new ArrayList<>();
 
     private ModuleManager manager;
 
     @BeforeEach
     void setUp() {
         manager = new ModuleManager(new FakeStore(), Path.of("cloud", "config", "modules"),
-                () -> api, () -> List.of(new FakeModule("rest", false, calls), new FakeModule("kaputt", true, calls)));
+                () -> api, () -> List.of(new FakeModule("rest", false, calls), new FakeModule("kaputt", true, calls)),
+                event -> events.add(event.getName() + ":" + event.getState()));
     }
 
     @Test
@@ -117,6 +120,109 @@ class ModuleManagerTest {
     void invalidNamesAreRejected() {
         assertThrows(IllegalArgumentException.class, () -> manager.enable("Rest!"));
         assertThrows(IllegalArgumentException.class, () -> manager.enable(" "));
+    }
+
+    @Test
+    void everyStateChangeIsPublishedAsAnEvent() {
+        stored.put("rest", new ModuleConfig("rest", true, Map.of()));
+        stored.put("fehlt", new ModuleConfig("fehlt", true, Map.of()));
+
+        manager.start();
+        assertEquals(List.of("rest:ENABLED"), events, "der Start meldet nur das wirklich geladene Modul");
+
+        manager.disable("rest").join();
+        manager.disable("fehlt").join();
+        assertEquals(List.of("rest:ENABLED", "rest:DISABLED", "fehlt:DISABLED"), events,
+                "auch ein Modul ohne Implementierung meldet seinen Schaltzustand");
+
+        assertThrows(CompletionException.class, () -> manager.enable("kaputt").join());
+        assertEquals("kaputt:FAILED", events.get(events.size() - 1));
+    }
+
+    @Test
+    void aBrokenPublisherDoesNotBlockTheToggle() {
+        manager = new ModuleManager(new FakeStore(), Path.of("cloud", "config", "modules"),
+                () -> api, () -> List.of(new FakeModule("rest", false, calls)),
+                event -> {
+                    throw new IllegalStateException("Redis nicht erreichbar");
+                });
+
+        manager.enable("rest").join();
+
+        assertTrue(manager.isEnabled("rest"));
+        assertTrue(stored.get("rest").enabled());
+    }
+
+    @Test
+    void thePublishedEventCarriesTheProtoType() {
+        List<ModuleStateChanged> published = new ArrayList<>();
+        manager = new ModuleManager(new FakeStore(), Path.of("cloud", "config", "modules"),
+                () -> api, () -> List.of(new FakeModule("rest", false, calls)), published::add);
+
+        manager.enable("rest").join();
+
+        assertEquals(1, published.size());
+        assertEquals("rest", published.get(0).getName());
+        assertEquals(ModuleState.ENABLED, published.get(0).getState());
+    }
+
+    @Test
+    void settingsAreWrittenToTheStoreAndReachTheModule() {
+        assertEquals(Map.of(), manager.settings("rest"), "ohne Konfiguration sind die Einstellungen leer");
+
+        manager.setSetting("rest", "apiKey", "geheim-geheim");
+        manager.setSetting("rest", "port", " 8099 ");
+        manager.enable("rest").join();
+
+        assertEquals(Map.of("apiKey", "geheim-geheim", "port", "8099"), manager.settings("rest"),
+                "Werte werden getrimmt gespeichert");
+        assertEquals(manager.settings("rest"), FakeModule.lastContext.settings(),
+                "das Modul sieht die Einstellungen in onLoad");
+        assertTrue(stored.get("rest").enabled(), "der Schaltzustand bleibt erhalten");
+
+        manager.setSetting("rest", "apiKey", "anderer-schluessel");
+        assertTrue(stored.get("rest").enabled(), "eine Einstellung ändert den Schaltzustand nicht");
+    }
+
+    @Test
+    void settingAValueWhileDisabledMakesTheNextEnableLoadAgain() {
+        manager.setSetting("rest", "apiKey", "erster-schluessel");
+        manager.enable("rest").join();
+        manager.disable("rest").join();
+
+        manager.setSetting("rest", "apiKey", "zweiter-schluessel");
+        manager.enable("rest").join();
+
+        assertEquals(List.of("load:rest", "enable:rest", "disable:rest", "load:rest", "enable:rest"), calls,
+                "ein nicht laufendes Modul liest seine Einstellungen erneut");
+        assertEquals(Map.of("apiKey", "zweiter-schluessel"), FakeModule.lastContext.settings());
+    }
+
+    @Test
+    void settingAValueOfARunningModuleLeavesItRunning() {
+        manager.enable("rest").join();
+
+        manager.setSetting("rest", "apiKey", "neuer-schluessel");
+        manager.disable("rest").join();
+        manager.enable("rest").join();
+
+        assertEquals(List.of("load:rest", "enable:rest", "disable:rest", "enable:rest"), calls,
+                "ein laufendes Modul behält seine geladenen Einstellungen bis zum Neustart");
+        assertEquals(Map.of("apiKey", "neuer-schluessel"), manager.settings("rest"));
+    }
+
+    @Test
+    void unknownModulesAndUnusableSettingsAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> manager.setSetting("fehlt", "apiKey", "wert"));
+        assertThrows(IllegalArgumentException.class, () -> manager.setSetting("rest", " ", "wert"));
+        assertThrows(IllegalArgumentException.class, () -> manager.setSetting("rest", "api key", "wert"));
+        assertThrows(IllegalArgumentException.class, () -> manager.setSetting("rest", "apiKey", "   "));
+        assertThrows(IllegalArgumentException.class, () -> manager.setSetting("rest", "apiKey", null));
+        assertThrows(IllegalArgumentException.class,
+                () -> manager.setSetting("rest", "apiKey", "x".repeat(513)));
+        assertThrows(IllegalArgumentException.class, () -> manager.settings("Rest!"));
+
+        assertTrue(stored.isEmpty(), "abgelehnte Einstellungen werden nicht gespeichert");
     }
 
     private static final ByteStormApi api = new ByteStormApi() {

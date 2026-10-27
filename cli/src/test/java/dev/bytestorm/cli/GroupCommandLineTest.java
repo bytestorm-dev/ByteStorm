@@ -26,6 +26,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GroupCommandLineTest {
 
+    /** Entfernt Tabellenabstände: Zellen bleiben durch genau ein Leerzeichen getrennt. */
+    private static String plain(String text) {
+        return String.join("\n", text.lines()
+                .map(line -> line.strip().replaceAll("\\s+", " "))
+                .toList());
+    }
+
     private final Map<String, ServiceGroup> stored = new LinkedHashMap<>();
     private final List<String> templates = new ArrayList<>(List.of("ALL", "Lobby", "Survival"));
 
@@ -152,10 +159,11 @@ class GroupCommandLineTest {
 
         String output = execute("group list");
 
-        assertTrue(output.contains("Name\tTyp\tPlattform"), output);
-        assertTrue(output.contains("Lobby\tSERVER\tpaper"), output);
-        assertTrue(output.contains("ja (1)"), output);
-        assertTrue(output.contains("Proxy\tPROXY\tvelocity"), output);
+        String text = plain(output);
+        assertTrue(text.contains("Name Typ Plattform"), text);
+        assertTrue(text.contains("Lobby SERVER paper"), text);
+        assertTrue(text.contains("ja (1)"), text);
+        assertTrue(text.contains("Proxy PROXY velocity"), text);
     }
 
     @Test
@@ -201,7 +209,7 @@ class GroupCommandLineTest {
         assertEquals("Lobby", scaler.group);
         assertEquals(3, scaler.target);
         assertTrue(output.contains("Gruppe 'Lobby': Ziel 3 — 2 gestartet, 0 gestoppt."), output);
-        assertTrue(output.contains("START 1 -> 2: manuell auf 2 skaliert"), output);
+        assertTrue(output.contains("START 1 → 2: manuell auf 2 skaliert"), output);
     }
 
     @Test

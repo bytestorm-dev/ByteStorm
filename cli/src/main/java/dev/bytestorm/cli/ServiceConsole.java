@@ -35,8 +35,11 @@ public final class ServiceConsole implements AutoCloseable {
     /** Dateiname der persistenten History im Log-Verzeichnis der Cloud. */
     public static final String HISTORY_FILE_NAME = ".cli-history";
 
-    /** Prompt der Konsole, fett cyan. */
-    public static final String PROMPT = "\u001B[1;36mbytestorm\u001B[0m> ";
+    /** Prompt der Konsole, fett cyan mit gedämpftem Zeichen. */
+    public static final String PROMPT = "\u001B[1;36mbytestorm\u001B[0m \u001B[2m›\u001B[0m ";
+
+    /** Prompt ohne Farben, etwa bei {@code --no-color} oder an einer Pipe. */
+    private static final String PROMPT_PLAIN = "bytestorm> ";
 
     private static final int HISTORY_SIZE = 2_000;
     private static final int HISTORY_FILE_SIZE = 10_000;
@@ -44,6 +47,8 @@ public final class ServiceConsole implements AutoCloseable {
     private static final List<String> COMMANDS = List.of(
             "help",
             "info",
+            "status",
+            "watch",
             "clear",
             "service",
             "list",
@@ -121,6 +126,8 @@ public final class ServiceConsole implements AutoCloseable {
         this.controller = Objects.requireNonNull(controller, "controller");
         this.terminal = Objects.requireNonNull(terminal, "terminal");
         this.historyFile = historyFile == null ? null : historyFile.toAbsolutePath().normalize();
+        // Farben erst hier schalten: Die Konsole kennt als einzige den Terminaltyp.
+        Theme.apply(terminal.getType());
 
         LineReaderBuilder builder = LineReaderBuilder.builder()
                 .terminal(terminal)
@@ -142,12 +149,12 @@ public final class ServiceConsole implements AutoCloseable {
      * Liest Kommandos, bis der Benutzer die Konsole beendet.
      */
     public void run() {
-        terminal.writer().println("ByteStorm-Konsole — 'help' zeigt die Kommandos, 'exit' beendet die Cloud.");
+        terminal.writer().println(welcome());
         terminal.flush();
         while (true) {
             String line;
             try {
-                line = reader.readLine(PROMPT);
+                line = reader.readLine(Theme.enabled() ? PROMPT : PROMPT_PLAIN);
             } catch (UserInterruptException | EndOfFileException e) {
                 return;
             }
@@ -167,18 +174,56 @@ public final class ServiceConsole implements AutoCloseable {
             if (handleScreen(input)) {
                 continue;
             }
+            if (handleWatch(input)) {
+                continue;
+            }
 
             String output;
             try {
                 output = commandLine.execute(input);
             } catch (RuntimeException e) {
-                output = "Fehler: " + messageOf(e);
+                output = Theme.fail("Fehler: " + messageOf(e));
             }
             if (!output.isEmpty()) {
                 terminal.writer().println(output);
             }
             terminal.flush();
         }
+    }
+
+    /**
+     * @return Begrüßung mit den wichtigsten Einstiegen
+     */
+    private String welcome() {
+        String nl = System.lineSeparator();
+        return Theme.bold("ByteStorm") + Theme.dim(" — Cloud-Konsole") + nl
+                + Theme.dim("  bytestorm status   Services, Gruppen und Last auf einen Blick") + nl
+                + Theme.dim("  bytestorm watch    dieselbe Übersicht, fortlaufend") + nl
+                + Theme.dim("  bytestorm help     alle Kommandos") + nl
+                + Theme.dim("  exit beendet die Cloud.");
+    }
+
+    /**
+     * Öffnet die fortlaufende Übersicht für {@code watch [sekunden]}.
+     *
+     * @param input eingegebene Zeile
+     * @return {@code true}, wenn die Zeile hier behandelt wurde
+     */
+    private boolean handleWatch(String input) {
+        String[] tokens = input.split("\\s+");
+        if (!tokens[0].equalsIgnoreCase("watch")) {
+            return false;
+        }
+        long interval;
+        try {
+            interval = Dashboard.intervalMillis(tokens.length > 1 ? tokens[1] : null);
+        } catch (IllegalArgumentException e) {
+            terminal.writer().println(Theme.warn(e.getMessage()));
+            terminal.flush();
+            return true;
+        }
+        new DashboardScreen(terminal, commandLine::dashboardSnapshot, interval).run();
+        return true;
     }
 
     /**
@@ -265,7 +310,7 @@ public final class ServiceConsole implements AutoCloseable {
             return false;
         }
         if (tokens.length < 3) {
-            terminal.writer().println("Service-Name fehlt (service screen <name>)");
+            terminal.writer().println(Theme.warn("Service-Name fehlt (service screen <name>)"));
             terminal.flush();
             return true;
         }

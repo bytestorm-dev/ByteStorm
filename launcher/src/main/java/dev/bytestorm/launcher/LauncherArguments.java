@@ -3,6 +3,7 @@ package dev.bytestorm.launcher;
 import lombok.experimental.UtilityClass;
 
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Kommandozeilenargumente des Launchers.
@@ -11,7 +12,11 @@ import java.nio.file.Path;
 public final class LauncherArguments {
 
     /** Aufrufhinweis für {@code --help}. */
-    public static final String USAGE = "Aufruf: java -jar bytestorm.jar [--dir <Cloud-Verzeichnis>]";
+    public static final String USAGE = "Aufruf: java -jar bytestorm.jar [--dir <Cloud-Verzeichnis>]"
+            + " [--no-color]";
+
+    /** Systemproperty, die die CLI-Farben steuert ({@code always}/{@code never}). */
+    public static final String COLOR_PROPERTY = "bytestorm.color";
 
     /**
      * Liest {@code --dir <Pfad>} bzw. {@code -d <Pfad>}.
@@ -34,5 +39,13 @@ public final class LauncherArguments {
      */
     public static boolean wantsHelp(String[] args) {
         return args.length == 1 && ("--help".equals(args[0]) || "-h".equals(args[0]));
+    }
+
+    /**
+     * @param args Kommandozeilenargumente
+     * @return {@code true}, wenn {@code --no-color} gesetzt ist
+     */
+    public static boolean noColor(String[] args) {
+        return List.of(args).contains("--no-color");
     }
 }

@@ -34,6 +34,10 @@ public final class Launcher {
             System.out.println(LauncherArguments.USAGE);
             return;
         }
+        if (LauncherArguments.noColor(args)) {
+            // Die Konsole liest die Property beim Aufbau (§17); sie wirkt prozessweit.
+            System.setProperty(LauncherArguments.COLOR_PROPERTY, "never");
+        }
 
         Path directory = LauncherArguments.cloudDirectory(args);
         CloudLayout layout = new CloudLayout(directory);

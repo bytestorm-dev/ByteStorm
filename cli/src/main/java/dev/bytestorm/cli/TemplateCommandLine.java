@@ -11,7 +11,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.StringJoiner;
 
 /**
  * Template-Kommandos der CLI (§10, §17).
@@ -62,23 +61,25 @@ public final class TemplateCommandLine {
      */
     public String execute(String[] tokens) {
         if (tokens.length < 2) {
-            return USAGE.stripTrailing();
+            return Theme.help(USAGE.stripTrailing());
         }
         String command = tokens[1].toLowerCase(Locale.ROOT);
         try {
             return switch (command) {
-                case "help" -> USAGE.stripTrailing();
+                case "help" -> Theme.help(USAGE.stripTrailing());
                 case "list" -> list();
                 case "create" -> create(tokens);
                 case "delete" -> delete(tokens);
                 case "copy" -> copy(tokens);
                 case "sync" -> sync(tokens);
-                default -> "Unbekanntes Template-Kommando: " + command + NL + USAGE.stripTrailing();
+                default -> Theme.warn("Unbekanntes Template-Kommando: " + command) + NL
+                        + Theme.help(USAGE.stripTrailing());
             };
         } catch (IllegalArgumentException | IllegalStateException e) {
-            return "Fehler: " + e.getMessage();
+            return Theme.fail("Fehler: " + e.getMessage());
         } catch (RuntimeException e) {
-            return "Fehler: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+            return Theme.fail("Fehler: ") + (e.getMessage() == null
+                    ? e.getClass().getSimpleName() : e.getMessage());
         }
     }
 
@@ -97,55 +98,55 @@ public final class TemplateCommandLine {
     private String list() {
         List<TemplateEntry> entries = templates.list();
         if (entries.isEmpty()) {
-            return "Keine Templates unter templates/ gefunden.";
+            return Theme.dim("Keine Templates unter templates/ gefunden.");
         }
-        StringJoiner out = new StringJoiner(NL);
-        out.add("Name\tDateien\tGröße\tGeändert\tEbene");
+        Table table = Table.of("Name", "Dateien", "Größe", "Geändert", "Ebene");
         for (TemplateEntry entry : entries) {
-            out.add(entry.name() + "\t" + entry.files() + "\t" + size(entry.bytes())
-                    + "\t" + timestamp(entry.lastModified())
-                    + "\t" + (entry.fixed() ? "fest" : "eigenes"));
+            table.row(Theme.bold(entry.name()), String.valueOf(entry.files()), size(entry.bytes()),
+                    timestamp(entry.lastModified()),
+                    entry.fixed() ? Theme.cyan("fest") : Theme.dim("eigenes"));
         }
-        return out.toString();
+        return table.render();
     }
 
     private String create(String[] tokens) {
         if (tokens.length < 3) {
-            return "Templatename fehlt (templates create <name>)";
+            return Theme.warn("Templatename fehlt (templates create <name>)");
         }
         TemplateEntry created = templates.create(tokens[2]);
-        return "Template '" + created.name() + "' angelegt (" + fixedHint(created) + "). "
-                + "Inhalt aus templates/" + created.name() + "/ ablegen oder `templates sync` nutzen.";
+        return Theme.ok("Template '" + created.name() + "' angelegt (" + fixedHint(created) + "). "
+                + "Inhalt aus templates/" + created.name() + "/ ablegen oder `templates sync` nutzen.");
     }
 
     private String delete(String[] tokens) {
         if (tokens.length < 3) {
-            return "Templatename fehlt (templates delete <name>)";
+            return Theme.warn("Templatename fehlt (templates delete <name>)");
         }
         String name = tokens[2];
         boolean fixed = templates.delete(name);
-        return "Template '" + name + "' gelöscht."
-                + (fixed ? " Feste Ebene: der nächste Start legt die Standard-Dateien wieder an, "
-                + "Gruppen mit diesem Template laufen bis dahin ohne diese Ebene." : "");
+        return Theme.ok("Template '" + name + "' gelöscht.")
+                + (fixed ? " " + Theme.warn("Feste Ebene: der nächste Start legt die Standard-Dateien "
+                + "wieder an, Gruppen mit diesem Template laufen bis dahin ohne diese Ebene.") : "");
     }
 
     private String copy(String[] tokens) {
         if (tokens.length < 4) {
-            return "Quelle und Ziel fehlen (templates copy <quelle> <ziel>)";
+            return Theme.warn("Quelle und Ziel fehlen (templates copy <quelle> <ziel>)");
         }
         TemplateEntry copied = templates.copy(tokens[2], tokens[3]);
-        return "Template '" + tokens[2] + "' nach '" + copied.name() + "' kopiert ("
-                + copied.files() + " Dateien, " + size(copied.bytes()) + ").";
+        return Theme.ok("Template '" + tokens[2] + "' nach '" + copied.name() + "' kopiert ("
+                + copied.files() + " Dateien, " + size(copied.bytes()) + ").");
     }
 
     private String sync(String[] tokens) {
         if (tokens.length < 4) {
-            return "Service und Template fehlen (templates sync <service> <template>)";
+            return Theme.warn("Service und Template fehlen (templates sync <service> <template>)");
         }
         SyncResult result = templates.sync(tokens[2], tokens[3]);
-        return "Ordner von '" + tokens[2] + "' nach Template '" + result.template().name()
+        return Theme.ok("Ordner von '" + tokens[2] + "' nach Template '" + result.template().name()
                 + "' gespiegelt: " + result.files() + " Dateien, " + size(result.template().bytes())
-                + ". Laufende Services nutzen die Änderung erst nach `service reapply <name>`.";
+                + ".") + NL + Theme.dim("Laufende Services nutzen die Änderung erst nach "
+                + "`service reapply <name>`.");
     }
 
     private static String fixedHint(TemplateEntry entry) {

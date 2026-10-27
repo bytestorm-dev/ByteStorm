@@ -12,13 +12,17 @@ import dev.bytestorm.core.config.PortSettings;
 import dev.bytestorm.core.config.ProxySettings;
 import dev.bytestorm.core.config.RedisSettings;
 import dev.bytestorm.core.config.ScalingSettings;
+import dev.bytestorm.core.mongo.model.ModuleConfig;
 import dev.bytestorm.proto.RuntimeType;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -28,7 +32,9 @@ import java.util.function.Consumer;
  * Verbindungen vor dem Speichern und wiederholt die Eingabe bei Fehlern, statt
  * abzubrechen. Die Konfiguration wird atomar und mit Rechten {@code 0600}
  * geschrieben, weil sie Zugangsdaten enthält (§20). Erst danach werden die
- * Standardgruppen angelegt.
+ * Standardgruppen angelegt und die aktivierten Module samt ihrer Einstellungen in
+ * der Modul-Konfiguration hinterlegt — ein aktiviertes REST-Modul bekommt hier
+ * seinen API-Key, damit die Cloud es ohne Handarbeit starten kann (§11, §16).
  *
  * <p>Ein Abbruch (Strg+C, EOF oder abgelehnter Wiederholungsversuch) hinterlässt
  * weder eine halbe Konfiguration noch eine temporäre Datei.
@@ -44,6 +50,7 @@ public final class FirstRunWizard {
     private final WizardIo io;
     private final ConnectionTester tester;
     private final Consumer<MongoSettings> defaultGroups;
+    private final BiConsumer<MongoSettings, List<ModuleConfig>> moduleSetup;
 
     /**
      * @param io            Ein-/Ausgabe
@@ -51,9 +58,22 @@ public final class FirstRunWizard {
      * @param defaultGroups legt nach dem Speichern die Standardgruppen an
      */
     public FirstRunWizard(WizardIo io, ConnectionTester tester, Consumer<MongoSettings> defaultGroups) {
+        this(io, tester, defaultGroups, (settings, modules) -> {
+        });
+    }
+
+    /**
+     * @param io            Ein-/Ausgabe
+     * @param tester        Prüfung der Verbindungen
+     * @param defaultGroups legt nach dem Speichern die Standardgruppen an
+     * @param moduleSetup   speichert die Konfiguration der aktivierten Module
+     */
+    public FirstRunWizard(WizardIo io, ConnectionTester tester, Consumer<MongoSettings> defaultGroups,
+                          BiConsumer<MongoSettings, List<ModuleConfig>> moduleSetup) {
         this.io = Objects.requireNonNull(io, "io");
         this.tester = Objects.requireNonNull(tester, "tester");
         this.defaultGroups = Objects.requireNonNull(defaultGroups, "defaultGroups");
+        this.moduleSetup = Objects.requireNonNull(moduleSetup, "moduleSetup");
     }
 
     /**
@@ -77,7 +97,12 @@ public final class FirstRunWizard {
         int proxyPort = askPort("Proxy-Port", PortSettings.DEFAULT_PROXY);
         int serverPort = askPort("Server-Startport", PortSettings.DEFAULT_SERVER_START);
         boolean rest = io.confirm("REST-Modul aktivieren?", false);
+        // Nur fragen, was das Modul zum Starten braucht (§11): Adresse, Port und Key.
+        String restHost = rest ? io.ask("REST-Host", DefaultModules.REST_DEFAULT_HOST) : "";
+        int restPort = rest ? askPort("REST-Port", DefaultModules.REST_DEFAULT_PORT) : 0;
+        String restKey = rest ? askRestKey() : "";
         boolean discord = io.confirm("Discord-Modul aktivieren?", false);
+        List<ModuleConfig> modules = moduleConfigs(rest, restHost, restPort, restKey, discord);
 
         CloudConfig config = new CloudConfig(
                 mongo,
@@ -106,7 +131,62 @@ public final class FirstRunWizard {
         } catch (RuntimeException e) {
             io.message("Hinweis: Standardgruppen konnten nicht angelegt werden: " + describe(e));
         }
+        if (!modules.isEmpty()) {
+            try {
+                moduleSetup.accept(mongo, modules);
+                io.message("Modul-Konfiguration gespeichert: " + String.join(", ",
+                        modules.stream().map(ModuleConfig::name).toList())
+                        + (rest ? " — das REST-Modul startet auf " + restHost + ":" + restPort : ""));
+            } catch (RuntimeException e) {
+                io.message("Hinweis: Modul-Konfiguration konnte nicht gespeichert werden: " + describe(e));
+            }
+        }
         return config;
+    }
+
+    /**
+     * Sammelt die Konfiguration der aktivierten Module. Nur aktivierte Module
+     * bekommen einen Eintrag; der API-Key geht ausschließlich nach MongoDB, nie in
+     * die Antwort oder in eine Meldung (§20).
+     *
+     * @param rest     REST-Modul aktiv
+     * @param restHost Netzadresse des REST-Moduls
+     * @param restPort Port des REST-Moduls
+     * @param restKey  API-Key des REST-Moduls
+     * @param discord  Discord-Modul aktiv
+     * @return Konfigurationen für {@code modules_config}
+     */
+    private static List<ModuleConfig> moduleConfigs(boolean rest, String restHost, int restPort,
+                                                    String restKey, boolean discord) {
+        List<ModuleConfig> modules = new ArrayList<>(2);
+        if (rest) {
+            modules.add(new ModuleConfig(DefaultModules.REST, true, Map.of(
+                    DefaultModules.REST_HOST, restHost,
+                    DefaultModules.REST_PORT, String.valueOf(restPort),
+                    DefaultModules.REST_API_KEY, restKey)));
+        }
+        if (discord) {
+            modules.add(new ModuleConfig("discord", true, Map.of()));
+        }
+        return List.copyOf(modules);
+    }
+
+    /**
+     * Fragt den API-Key ab und wiederholt, solange er zu kurz ist — sonst
+     * verweigert das REST-Modul beim Start den Dienst.
+     *
+     * @return der geprüfte Key
+     */
+    private String askRestKey() {
+        while (true) {
+            String key = io.askSecret("REST-API-Key (mindestens "
+                    + DefaultModules.REST_MIN_KEY_LENGTH + " Zeichen)");
+            if (key != null && key.trim().length() >= DefaultModules.REST_MIN_KEY_LENGTH) {
+                return key.trim();
+            }
+            io.message("Der API-Key braucht mindestens " + DefaultModules.REST_MIN_KEY_LENGTH
+                    + " Zeichen, sonst verweigert das REST-Modul den Start.");
+        }
     }
 
     private MongoSettings askMongo() {

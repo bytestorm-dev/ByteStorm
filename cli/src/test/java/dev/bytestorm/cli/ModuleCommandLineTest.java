@@ -19,7 +19,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ModuleCommandLineTest {
 
+    /** Entfernt Tabellenabstände: Zellen bleiben durch genau ein Leerzeichen getrennt. */
+    private static String plain(String text) {
+        return String.join("\n", text.lines()
+                .map(line -> line.strip().replaceAll("\\s+", " "))
+                .toList());
+    }
+
     private final List<String> calls = new java.util.ArrayList<>();
+    private final Map<String, Map<String, String>> settings = new LinkedHashMap<>();
 
     private Map<String, ModuleInfo> modules;
     private ModuleCommandLine commandLine;
@@ -36,9 +44,10 @@ class ModuleCommandLineTest {
     void listShowsStateAndVersion() {
         String output = commandLine.execute(new String[]{"module", "list"});
 
-        assertTrue(output.startsWith("Name\tStatus\tVersion"), output);
-        assertTrue(output.contains("discord\tdeaktiviert (DISABLED)\t1.0"), output);
-        assertTrue(output.contains("rest\taktiviert (ENABLED)\t1.0"), output);
+        String text = plain(output);
+        assertTrue(text.startsWith("Name Aktiviert Zustand Version"), text);
+        assertTrue(text.contains("discord nein DISABLED 1.0"), text);
+        assertTrue(text.contains("rest ja ENABLED 1.0"), text);
         // Alphabetisch, nicht in Einfügereihenfolge.
         assertTrue(output.indexOf("discord") < output.indexOf("rest"), output);
     }
@@ -58,7 +67,8 @@ class ModuleCommandLineTest {
         String output = commandLine.execute(new String[]{"module", "info", "rest"});
 
         assertTrue(output.contains("Name: rest"), output);
-        assertTrue(output.contains("Aktiviert: true"), output);
+        assertTrue(output.contains("Status: ENABLED"), output);
+        assertTrue(output.contains("Aktiviert: ja"), output);
         assertTrue(output.contains("Version: 1.0"), output);
     }
 
@@ -80,11 +90,48 @@ class ModuleCommandLineTest {
     }
 
     @Test
+    void settingsAreShownWithSecretsRedacted() {
+        commandLine.execute(new String[]{"module", "set", "rest", "apiKey", "geheim-geheim-1234"});
+        commandLine.execute(new String[]{"module", "set", "rest", "port", "8099"});
+
+        String output = commandLine.execute(new String[]{"module", "settings", "rest"});
+
+        String text = plain(output);
+        assertTrue(text.startsWith("Einstellung Wert"), text);
+        assertTrue(text.contains("apiKey ***"), text);
+        assertFalse(text.contains("geheim-geheim-1234"), "der Key erscheint nie im Klartext: " + text);
+        assertTrue(text.contains("port 8099"), text);
+    }
+
+    @Test
+    void settingAValueSaysWhenItTakesEffect() {
+        String running = commandLine.execute(new String[]{"module", "set", "rest", "apiKey", "geheim-geheim-1234"});
+        assertTrue(running.contains("Neustart der Cloud"), running);
+
+        String stopped = commandLine.execute(new String[]{"module", "set", "discord", "botToken", "geheim"});
+        assertTrue(stopped.contains("module enable discord"), stopped);
+
+        assertEquals(List.of("set:rest.apiKey", "set:discord.botToken"), calls);
+        assertEquals(Map.of("apiKey", "geheim-geheim-1234"), settings.get("rest"));
+    }
+
+    @Test
+    void incompleteSettingsCommandsAreReported() {
+        assertTrue(commandLine.execute(new String[]{"module", "set", "rest", "apiKey"}).contains("Verwendung"));
+        assertTrue(commandLine.execute(new String[]{"module", "set", "fehlt", "apiKey", "wert"})
+                .startsWith("Fehler: "));
+        assertTrue(commandLine.execute(new String[]{"module", "settings"}).contains("Modulname fehlt"));
+        assertTrue(commandLine.execute(new String[]{"module", "settings", "lobby"})
+                .contains("keine Einstellungen"));
+    }
+
+    @Test
     void unknownModuleAndMissingNameAreReported() {
         assertTrue(commandLine.execute(new String[]{"module", "info", "fehlt"}).contains("Unbekanntes Modul"));
         assertTrue(commandLine.execute(new String[]{"module", "enable"}).contains("Modulname fehlt"));
         assertTrue(commandLine.execute(new String[]{"module", "quark"}).contains("Unbekanntes Modul-Kommando"));
         assertTrue(commandLine.execute(new String[]{"module", "help"}).contains("module disable"));
+        assertTrue(commandLine.execute(new String[]{"module", "help"}).contains("module set"));
     }
 
     private static ModuleInfo info(String name, String version, boolean enabled, ModuleState state) {
@@ -111,6 +158,20 @@ class ModuleCommandLineTest {
         @Override
         public boolean isEnabled(String name) {
             return get(name).map(ModuleInfo::getEnabled).orElse(false);
+        }
+
+        @Override
+        public Map<String, String> settings(String name) {
+            return Map.copyOf(settings.getOrDefault(name, Map.of()));
+        }
+
+        @Override
+        public void setSetting(String name, String key, String value) {
+            if (!modules.containsKey(name)) {
+                throw new IllegalArgumentException("Unbekanntes Modul: " + name);
+            }
+            settings.computeIfAbsent(name, module -> new LinkedHashMap<>()).put(key, value);
+            calls.add("set:" + name + "." + key);
         }
 
         @Override

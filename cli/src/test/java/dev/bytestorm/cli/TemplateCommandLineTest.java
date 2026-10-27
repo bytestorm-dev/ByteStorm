@@ -17,6 +17,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TemplateCommandLineTest {
 
+    /** Entfernt Tabellenabstände: Zellen bleiben durch genau ein Leerzeichen getrennt. */
+    private static String plain(String text) {
+        return String.join("\n", text.lines()
+                .map(line -> line.strip().replaceAll("\\s+", " "))
+                .toList());
+    }
+
     @TempDir
     Path temp;
 
@@ -48,12 +55,13 @@ class TemplateCommandLineTest {
 
         String output = cli.execute(new String[] {"templates", "list"});
 
-        String[] lines = output.split(System.lineSeparator());
-        assertEquals("Name\tDateien\tGröße\tGeändert\tEbene", lines[0]);
-        assertTrue(lines[1].startsWith("ALL\t1\t9 B\t"), lines[1]);
-        assertTrue(lines[1].endsWith("\tfest"), lines[1]);
-        assertTrue(lines[2].startsWith("Lobby\t1\t"), lines[2]);
-        assertTrue(lines[2].endsWith("\teigenes"), lines[2]);
+        String[] lines = plain(output).split("\n");
+        assertEquals("Name Dateien Größe Geändert Ebene", lines[0]);
+        // Zeile 1 ist die Trennlinie der Tabelle.
+        assertTrue(lines[2].startsWith("ALL 1 9 B"), lines[2]);
+        assertTrue(lines[2].endsWith("fest"), lines[2]);
+        assertTrue(lines[3].startsWith("Lobby 1 "), lines[3]);
+        assertTrue(lines[3].endsWith("eigenes"), lines[3]);
     }
 
     @Test

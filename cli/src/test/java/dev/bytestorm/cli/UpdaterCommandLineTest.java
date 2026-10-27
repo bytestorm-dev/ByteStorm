@@ -27,6 +27,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class UpdaterCommandLineTest {
 
+    /** Entfernt Tabellenabstände: Zellen bleiben durch genau ein Leerzeichen getrennt. */
+    private static String plain(String text) {
+        return String.join("\n", text.lines()
+                .map(line -> line.strip().replaceAll("\\s+", " "))
+                .toList());
+    }
+
     @TempDir
     Path temp;
 
@@ -60,12 +67,13 @@ class UpdaterCommandLineTest {
         UpdaterCommandLine commandLine = commandLine("1.1");
 
         String stable = commandLine.execute(new String[]{"updater", "versions"});
-        assertTrue(stable.contains("v1.1\tRelease\t2026-10-20\tbytestorm-1.1.zip"), stable);
-        assertTrue(stable.contains("--all"), stable);
-        assertTrue(stable.contains("versions --all"), stable);
+        String table = plain(stable);
+        assertTrue(table.contains("v1.1 Release 2026-10-20 bytestorm-1.1.zip"), table);
+        assertTrue(table.contains("--all"), table);
+        assertTrue(table.contains("versions --all"), table);
 
-        String all = commandLine.execute(new String[]{"updater", "versions", "--all"});
-        assertTrue(all.contains("v1.2-SNAPSHOT\tBeta"), all);
+        String all = plain(commandLine.execute(new String[]{"updater", "versions", "--all"}));
+        assertTrue(all.contains("v1.2-SNAPSHOT Beta"), all);
     }
 
     @Test

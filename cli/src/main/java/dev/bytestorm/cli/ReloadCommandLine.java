@@ -49,10 +49,10 @@ public final class ReloadCommandLine {
     public String execute(String[] tokens) {
         String target = tokens.length > 1 ? tokens[1].toLowerCase(java.util.Locale.ROOT) : "all";
         if (target.equals("help") || target.equals("-h") || target.equals("--help")) {
-            return USAGE.stripTrailing();
+            return Theme.help(USAGE.stripTrailing());
         }
         if (!target.equals("all") && !target.equals("config") && !target.equals("groups")) {
-            return "Unbekanntes reload-Ziel: " + tokens[1] + " (reload help)";
+            return Theme.warn("Unbekanntes reload-Ziel: " + tokens[1] + " (reload help)");
         }
 
         StringBuilder out = new StringBuilder();
@@ -77,22 +77,22 @@ public final class ReloadCommandLine {
     private String reloadConfig() {
         try {
             CloudConfig next = config.reload();
-            return "Konfiguration neu geladen (Runtime %s, Scaling-Intervall %d s)"
-                    .formatted(next.runtime(), next.scaling().intervalSeconds());
+            return Theme.ok("Konfiguration neu geladen (Runtime %s, Scaling-Intervall %d s)"
+                    .formatted(next.runtime(), next.scaling().intervalSeconds()));
         } catch (ConfigException e) {
-            return "Neustart nötig: " + messageOf(e);
+            return Theme.warn("Neustart nötig: " + messageOf(e));
         } catch (RuntimeException e) {
-            return "Fehler: " + messageOf(e);
+            return Theme.fail("Fehler: " + messageOf(e));
         }
     }
 
     private String reloadGroups() {
         try {
             int count = groups.reloadCache();
-            return "Gruppen-Cache neu geladen: " + count
-                    + (count == 1 ? " Gruppe" : " Gruppen");
+            return Theme.ok("Gruppen-Cache neu geladen: " + count
+                    + (count == 1 ? " Gruppe" : " Gruppen"));
         } catch (RuntimeException e) {
-            return "Fehler: " + messageOf(e);
+            return Theme.fail("Fehler: " + messageOf(e));
         }
     }
 

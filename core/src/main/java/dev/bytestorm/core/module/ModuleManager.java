@@ -7,6 +7,7 @@ import dev.bytestorm.api.module.Modules;
 import dev.bytestorm.core.mongo.model.ModuleConfig;
 import dev.bytestorm.proto.ModuleInfo;
 import dev.bytestorm.proto.ModuleState;
+import dev.bytestorm.proto.ModuleStateChanged;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -25,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -40,11 +43,20 @@ import java.util.function.Supplier;
  * <p>Der Schaltzustand liegt in MongoDB ({@code modules_config}); beim Start
  * werden alle dort aktivierten Module geladen. Die Einstellungen eines Moduls
  * liest {@link ModuleContext#settings()} aus derselben Quelle, das
- * Datenverzeichnis liegt unter {@code config/modules/<name>/}.
+ * Datenverzeichnis liegt unter {@code config/modules/<name>/}. Dieselbe
+ * Konfiguration schreibt {@link #setSetting(String, String, String)}: So kommt
+ * z. B. der API-Key des REST-Moduls über die CLI oder den Wizard nach MongoDB,
+ * ohne dass jemand die Collection von Hand bearbeitet.
  *
  * <p>{@link ModuleContext#api()} liefert die öffentliche API
  * ({@code ByteStorm.api()}); ist sie nicht installiert, scheitert der Zugriff mit
  * derselben Meldung wie überall sonst.
+ *
+ * <p>Jeder Zustandswechsel geht als {@link ModuleStateChanged} an den Publisher,
+ * in der Cloud der {@code EventBus} (Topic {@code bs:event:bytestorm.ModuleStateChanged}).
+ * Damit sieht z. B. das Discord-Modul ein- und ausgeschaltete Module, ohne den
+ * {@code ModuleManager} zu kennen. Ein fehlgeschlagener Publish bleibt folgenlos:
+ * das Modul ist bereits umgeschaltet, die Meldung ist nur eine Benachrichtigung.
  */
 @Slf4j
 public final class ModuleManager implements Modules, AutoCloseable {
@@ -52,6 +64,10 @@ public final class ModuleManager implements Modules, AutoCloseable {
     private final ModuleStore store;
     private final Path modulesDirectory;
     private final Supplier<ByteStormApi> api;
+    private final Consumer<ModuleStateChanged> events;
+    /** Längster zulässiger Wert in der Modul-Konfiguration (Token, Schlüssel, Pfade). */
+    private static final int MAX_VALUE_LENGTH = 512;
+
     private final Map<String, Holder> holders = new ConcurrentHashMap<>();
     private final ExecutorService lifecycle = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -59,9 +75,11 @@ public final class ModuleManager implements Modules, AutoCloseable {
      * @param store            Persistenz der Modul-Konfigurationen
      * @param modulesDirectory Modul-Datenverzeichnis, üblicherweise {@code config/modules/}
      * @param api              Quelle der öffentlichen API, z. B. {@code ByteStorm::api}
+     * @param events           Publisher für Zustandswechsel, z. B. {@code eventBus::publish}
      */
-    public ModuleManager(ModuleStore store, Path modulesDirectory, Supplier<ByteStormApi> api) {
-        this(store, modulesDirectory, api, ModuleManager::discover);
+    public ModuleManager(ModuleStore store, Path modulesDirectory, Supplier<ByteStormApi> api,
+                         Consumer<ModuleStateChanged> events) {
+        this(store, modulesDirectory, api, ModuleManager::discover, events);
     }
 
     /**
@@ -69,13 +87,15 @@ public final class ModuleManager implements Modules, AutoCloseable {
      * @param modulesDirectory Modul-Datenverzeichnis
      * @param api              Quelle der öffentlichen API
      * @param discovery        Quelle der Modul-Implementierungen, z. B. der ServiceLoader
+     * @param events           Publisher für Zustandswechsel
      */
     ModuleManager(ModuleStore store, Path modulesDirectory, Supplier<ByteStormApi> api,
-                  Supplier<List<CloudModule>> discovery) {
+                  Supplier<List<CloudModule>> discovery, Consumer<ModuleStateChanged> events) {
         this.store = Objects.requireNonNull(store, "store");
         this.modulesDirectory = Objects.requireNonNull(modulesDirectory, "modulesDirectory")
                 .toAbsolutePath().normalize();
         this.api = Objects.requireNonNull(api, "api");
+        this.events = Objects.requireNonNull(events, "events");
         for (CloudModule module : Objects.requireNonNull(discovery, "discovery").get()) {
             register(module);
         }
@@ -146,6 +166,44 @@ public final class ModuleManager implements Modules, AutoCloseable {
     }
 
     @Override
+    public Map<String, String> settings(String name) {
+        String module = requireName(name);
+        return store.find(module).map(ModuleConfig::settings).orElseGet(Map::of);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Ein Modul, das gerade nicht läuft, verwirft seinen Ladezustand: Der
+     * nächste {@code enable} ruft {@code onLoad} erneut auf und liest damit die
+     * neuen Einstellungen. Ein laufendes Modul bleibt unangetastet — es hat seine
+     * Einstellungen schon gelesen, der neue Wert wirkt erst nach einem Neustart
+     * der Cloud.
+     */
+    @Override
+    public void setSetting(String name, String key, String value) {
+        String module = requireName(name);
+        String setting = requireSetting(key);
+        String stored = requireValue(setting, value);
+        Holder holder = holders.get(module);
+        if (holder == null && store.find(module).isEmpty()) {
+            throw new IllegalArgumentException("Unbekanntes Modul: " + module);
+        }
+
+        Map<String, String> settings = new LinkedHashMap<>(settings(module));
+        settings.put(setting, stored);
+        store.save(new ModuleConfig(module, isEnabled(module), settings));
+        if (holder != null) {
+            synchronized (holder) {
+                if (holder.state != ModuleState.ENABLED) {
+                    holder.loaded = false;
+                }
+            }
+        }
+        log.info("Einstellung '{}' von Modul '{}' gespeichert", setting, module);
+    }
+
+    @Override
     public CompletableFuture<Void> enable(String name) {
         String module = requireName(name);
         return CompletableFuture.runAsync(() -> load(module), lifecycle);
@@ -191,9 +249,11 @@ public final class ModuleManager implements Modules, AutoCloseable {
                 holder.state = ModuleState.ENABLED;
                 persist(name, true);
                 log.info("Modul '{}' aktiviert", name);
+                publish(name, ModuleState.ENABLED);
             } catch (RuntimeException e) {
                 holder.state = ModuleState.FAILED;
                 log.error("Modul '{}' konnte nicht aktiviert werden: {}", name, messageOf(e));
+                publish(name, ModuleState.FAILED);
                 throw e;
             }
         }
@@ -206,6 +266,7 @@ public final class ModuleManager implements Modules, AutoCloseable {
             if (store.find(name).isPresent()) {
                 persist(name, false);
                 log.info("Modul '{}' deaktiviert (keine Implementierung geladen)", name);
+                publish(name, ModuleState.DISABLED);
                 return;
             }
             throw new IllegalStateException("Kein Modul '" + name + "' im Classpath (lib/) gefunden");
@@ -218,11 +279,30 @@ public final class ModuleManager implements Modules, AutoCloseable {
                 holder.state = ModuleState.DISABLED;
                 persist(name, false);
                 log.info("Modul '{}' deaktiviert", name);
+                publish(name, ModuleState.DISABLED);
             } catch (RuntimeException e) {
                 holder.state = ModuleState.FAILED;
                 log.error("Modul '{}' konnte nicht gestoppt werden: {}", name, messageOf(e));
+                publish(name, ModuleState.FAILED);
                 throw e;
             }
+        }
+    }
+
+    /**
+     * Veröffentlicht einen Zustandswechsel. Die Meldung ist eine
+     * Benachrichtigung: Ist der Publisher nicht erreichbar, bleibt der
+     * Schaltvorgang trotzdem gültig und nur eine Warnung stehen.
+     *
+     * @param name  Modulname
+     * @param state neuer Zustand
+     */
+    private void publish(String name, ModuleState state) {
+        try {
+            events.accept(ModuleStateChanged.newBuilder().setName(name).setState(state).build());
+        } catch (RuntimeException e) {
+            log.warn("Zustand von Modul '{}' konnte nicht veröffentlicht werden: {}",
+                    name, messageOf(e));
         }
     }
 
@@ -249,6 +329,41 @@ public final class ModuleManager implements Modules, AutoCloseable {
             modules.add(module);
         }
         return modules;
+    }
+
+    /**
+     * @param key Einstellungsname, z. B. {@code apiKey}
+     * @return der geprüfte Name
+     * @throws IllegalArgumentException wenn der Name leer oder unzulässig ist
+     */
+    private static String requireSetting(String key) {
+        Objects.requireNonNull(key, "key");
+        String trimmed = key.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("Einstellungsname darf nicht leer sein");
+        }
+        if (!trimmed.matches("[A-Za-z0-9._-]{1,64}")) {
+            throw new IllegalArgumentException("Ungültiger Einstellungsname: " + key);
+        }
+        return trimmed;
+    }
+
+    /**
+     * @param key   Einstellungsname
+     * @param value Wert
+     * @return der geprüfte Wert
+     * @throws IllegalArgumentException wenn der Wert leer, zu lang oder mehrzeilig ist
+     */
+    private static String requireValue(String key, String value) {
+        String trimmed = value == null ? "" : value.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("Wert für '" + key + "' darf nicht leer sein");
+        }
+        if (trimmed.length() > MAX_VALUE_LENGTH) {
+            throw new IllegalArgumentException("Wert für '" + key + "' ist länger als "
+                    + MAX_VALUE_LENGTH + " Zeichen");
+        }
+        return trimmed;
     }
 
     private static String requireName(String name) {

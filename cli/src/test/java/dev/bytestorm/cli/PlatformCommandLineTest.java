@@ -16,6 +16,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlatformCommandLineTest {
 
+    /** Entfernt Tabellenabstände: Zellen bleiben durch genau ein Leerzeichen getrennt. */
+    private static String plain(String text) {
+        return String.join("\n", text.lines()
+                .map(line -> line.strip().replaceAll("\\s+", " "))
+                .toList());
+    }
+
     @TempDir
     Path temp;
 
@@ -36,9 +43,10 @@ class PlatformCommandLineTest {
     void listShowsTheLocalJars() {
         String output = commandLine.execute(new String[]{"platform", "list"});
 
-        assertTrue(output.contains("paper-1.21.4.jar"), output);
-        assertTrue(output.contains("velocity-4.3.0.jar"), output);
-        assertTrue(output.startsWith("Datei\tPlattform\tGröße\tGeändert"), output);
+        String text = plain(output);
+        assertTrue(text.startsWith("Datei Plattform Version Größe Geändert"), text);
+        assertTrue(text.contains("paper-1.21.4.jar paper 1.21.4 0 KB"), text);
+        assertTrue(text.contains("velocity-4.3.0.jar velocity 4.3.0 0 KB"), text);
     }
 
     @Test
@@ -56,8 +64,9 @@ class PlatformCommandLineTest {
     void tasksShowWhatIsOutdated() {
         String output = commandLine.execute(new String[]{"platform", "tasks"});
 
-        assertTrue(output.contains("paper\t1.21.4\t1.21.8\taktualisieren"), output);
-        assertTrue(output.contains("velocity\t4.3.0\t4.3.0\taktuell"), output);
+        String text = plain(output);
+        assertTrue(text.contains("paper 1.21.4 1.21.8 aktualisieren"), text);
+        assertTrue(text.contains("velocity 4.3.0 4.3.0 aktuell"), text);
     }
 
     @Test

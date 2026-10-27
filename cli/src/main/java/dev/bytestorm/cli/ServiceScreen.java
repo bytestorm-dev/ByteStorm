@@ -51,7 +51,7 @@ final class ServiceScreen {
     void run(String name) {
         Optional<ServiceInfo> found = controller.byName(name);
         if (found.isEmpty() || found.get().getId().isEmpty()) {
-            printLine("Unbekannter Service: " + name);
+            printLine(Theme.warn("Unbekannter Service: " + name));
             return;
         }
         ServiceId id = ServiceId.parse(found.get().getId());
@@ -61,14 +61,15 @@ final class ServiceScreen {
         try {
             previous = terminal.enterRawMode();
         } catch (RuntimeException e) {
-            printLine("Screen nicht verfügbar: " + messageOf(e));
+            printLine(Theme.fail("Screen nicht verfügbar: " + messageOf(e)));
             return;
         }
 
         AtomicBoolean running = new AtomicBoolean(true);
         Thread follower = null;
         try {
-            printLine("--- Screen " + serviceName + " — Ctrl+] beendet ---");
+            printLine(Theme.section("Screen " + serviceName)
+                    + Theme.dim("  —  Strg+] oder Strg+C beendet"));
             follower = Thread.ofVirtual()
                     .name("bytestorm-screen-" + serviceName)
                     .start(() -> follow(id, running));
@@ -90,7 +91,7 @@ final class ServiceScreen {
             synchronized (output) {
                 PrintWriter writer = terminal.writer();
                 writer.print("\r\n");
-                writer.println("Screen " + serviceName + " beendet.");
+                writer.println(Theme.dim("Screen " + serviceName + " beendet."));
                 writer.flush();
                 terminal.flush();
             }
@@ -172,7 +173,7 @@ final class ServiceScreen {
         try {
             controller.sendCommand(id, command);
         } catch (ServiceLifecycleException | RuntimeException e) {
-            printLine("Fehler: " + messageOf(e));
+            printLine(Theme.fail("Fehler: " + messageOf(e)));
         }
         renderPrompt();
     }
@@ -215,7 +216,7 @@ final class ServiceScreen {
     }
 
     private void renderPromptLocked() {
-        terminal.writer().print("\u001B[36mscreen " + serviceName + "\u001B[0m> " + input);
+        terminal.writer().print(Theme.cyan("screen " + serviceName) + "> " + input);
     }
 
     private void printLine(String line) {

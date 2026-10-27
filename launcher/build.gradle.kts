@@ -29,6 +29,10 @@ tasks.jar {
 // Cloud-Verzeichnis entpackt, kann die Cloud direkt starten.
 val bridgePlatforms = listOf("bungeecord", "paper", "velocity")
 
+// Optionale Module liegen als lib/module-<name>.jar bereit: Dort findet sie der
+// ServiceLoader (§16), und ihr Schaltzustand in MongoDB entscheidet, ob sie laufen.
+val modules = listOf("rest")
+
 tasks.register<Zip>("distributionZip") {
     group = "distribution"
     description = "Packt die startbare Cloud (bytestorm.jar + lib/) als Zip."
@@ -54,6 +58,12 @@ tasks.register<Zip>("distributionZip") {
         from(project(":bridge:bridge-$platform").tasks.named("shadowJar")) {
             into("lib")
             rename { "bridge-$platform.jar" }
+        }
+    }
+    modules.forEach { module ->
+        from(project(":modules:module-$module").tasks.named("shadowJar")) {
+            into("lib")
+            rename { "module-$module.jar" }
         }
     }
 }

@@ -18,6 +18,7 @@ import dev.bytestorm.controller.group.GroupManager;
 import dev.bytestorm.controller.player.PlayerManager;
 import dev.bytestorm.controller.registry.ServiceRegistry;
 import dev.bytestorm.controller.scaling.ScalingManager;
+import dev.bytestorm.controller.scaling.SystemHostMetrics;
 import dev.bytestorm.controller.template.TemplateManager;
 import dev.bytestorm.codec.ProtobufCodec;
 import dev.bytestorm.codec.TypeRegistry;
@@ -42,6 +43,7 @@ import dev.bytestorm.core.update.Updater;
 import dev.bytestorm.core.redis.RedisProvider;
 import dev.bytestorm.core.redis.RedisUnavailableException;
 import dev.bytestorm.core.redis.ServiceReconciliation;
+import dev.bytestorm.launcher.api.DefaultByteStormApi;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.launcher.layout.DefaultTemplates;
 import dev.bytestorm.launcher.layout.ServiceDirectories;
@@ -49,6 +51,7 @@ import dev.bytestorm.launcher.platform.PlatformDownloader;
 import dev.bytestorm.launcher.scaling.ServiceProvisioner;
 import dev.bytestorm.launcher.wizard.DefaultConnectionTester;
 import dev.bytestorm.launcher.wizard.DefaultGroups;
+import dev.bytestorm.launcher.wizard.DefaultModules;
 import dev.bytestorm.launcher.wizard.FirstRunWizard;
 import dev.bytestorm.launcher.wizard.JLineWizardIo;
 import dev.bytestorm.launcher.wizard.WizardAbortedException;
@@ -250,10 +253,23 @@ public final class Bootstrap implements AutoCloseable {
                     playerRepository::findByName, serviceRegistry, core.bridgeCommands());
             // `group scale` geht über dieselbe Scaling-Logik: Schutzregeln und Zeitstempel
             // dürfen nicht umgangen werden (§11, §17).
-            // Module liegen als Jar in lib/ und melden sich über den ServiceLoader (§16).
+            // Module liegen als Jar in lib/ und melden sich über den ServiceLoader (§16);
+            // jeder Zustandswechsel geht als ModuleStateChanged über den Event-Bus.
             ModuleStore moduleStore = new MongoModuleStore(new ModuleConfigRepository(mongo));
-            ModuleManager modules = new ModuleManager(moduleStore, layout.modules(), ByteStorm::api);
+            ModuleManager modules = new ModuleManager(moduleStore, layout.modules(), ByteStorm::api,
+                    core.events()::publish);
             shutdown.registerCloseable("modules", modules);
+            // Die öffentliche API (§15) steht, bevor Module geladen werden: Sie ist deren
+            // Zugang zur Cloud und später die Grundlage des REST-Moduls.
+            DefaultByteStormApi api = new DefaultByteStormApi(controller, provisioner, groups, scaling,
+                    DefaultByteStormApi.PlayerAccess.of(playerManager, playerRepository), templates,
+                    modules, core.events()::subscribe);
+            ByteStorm.install(api);
+            shutdown.register("api", () -> {
+                ByteStorm.uninstall();
+                api.close();
+            });
+            log.info("Öffentliche API installiert");
             modules.start();
             // Plattform-Jars kommen weiterhin aus platforms/, die CLI liest dasselbe Verzeichnis (§13).
             PlatformDownloader platformDownloader = new PlatformDownloader(layout.platforms());
@@ -266,7 +282,9 @@ public final class Bootstrap implements AutoCloseable {
                     new ModuleCommandLine(modules),
                     new PlatformCommandLine(layout.platforms(),
                             platformDownloader::availableVersions, platformDownloader::ensure),
-                    new UpdaterCommandLine(updater));
+                    new UpdaterCommandLine(updater),
+                    // Dieselbe Messquelle wie das Scaling: CPU und RAM im Dashboard (§17).
+                    new SystemHostMetrics());
             log.info("Node-ServiceManager bereit (Runtime {}, Logs {}, Scaling {} s)",
                     config.runtime(), layout.logs(), config.scaling().intervalSeconds());
 
@@ -609,7 +627,8 @@ public final class Bootstrap implements AutoCloseable {
         Logging.configure(directory);
         log.info("Keine Konfiguration gefunden — starte Erststart-Wizard");
         try (JLineWizardIo io = new JLineWizardIo()) {
-            new FirstRunWizard(io, new DefaultConnectionTester(), DefaultGroups::create).run(directory);
+            new FirstRunWizard(io, new DefaultConnectionTester(), DefaultGroups::create,
+                    DefaultModules::create).run(directory);
         } catch (WizardAbortedException e) {
             throw new ConfigException("Einrichtung abgebrochen: " + e.getMessage(), e);
         } catch (IOException e) {

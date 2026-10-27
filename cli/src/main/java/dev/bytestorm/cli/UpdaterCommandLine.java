@@ -71,13 +71,13 @@ public final class UpdaterCommandLine {
         String command = tokens.length > 1 ? tokens[1] : "";
         String argument = tokens.length > 2 ? tokens[2] : null;
         return switch (command.toLowerCase(Locale.ROOT)) {
-            case "", "help", "-h", "--help" -> USAGE.stripTrailing();
+            case "", "help", "-h", "--help" -> Theme.help(USAGE.stripTrailing());
             case "versions", "list", "available" -> versions(argument);
             case "check" -> check();
             case "update", "install" -> update(argument);
-            case "repository", "source" -> "Repository: " + updater.repository()
-                    + System.lineSeparator() + "Laufende Version: " + currentVersion();
-            default -> "Unbekanntes Updater-Kommando: " + tokens[1] + " (updater help)";
+            case "repository", "source" -> Theme.field("Repository", updater.repository())
+                    + System.lineSeparator() + Theme.field("Laufende Version", currentVersion());
+            default -> Theme.warn("Unbekanntes Updater-Kommando: " + tokens[1] + " (updater help)");
         };
     }
 
@@ -87,30 +87,32 @@ public final class UpdaterCommandLine {
         try {
             List<Updater.Release> releases = updater.releases();
             if (releases.isEmpty()) {
-                return "Keine Releases in " + updater.repository() + " gefunden.";
+                return Theme.warn("Keine Releases in " + updater.repository() + " gefunden.");
             }
-            StringJoiner out = new StringJoiner(System.lineSeparator());
-            out.add("Tag\tArt\tVeröffentlicht\tArtefakt");
+            Table table = Table.of("Tag", "Art", "Veröffentlicht", "Artefakt");
             int shown = 0;
             for (Updater.Release release : releases) {
                 if (release.prerelease() && !includePrereleases) {
                     continue;
                 }
-                out.add(release.tag() + "\t" + (release.prerelease() ? "Beta" : "Release") + "\t"
-                        + date(release.publishedAt()) + "\t"
-                        + (release.installable() ? release.assetName() : "—"));
+                table.row(Theme.bold(release.tag()),
+                        release.prerelease() ? Theme.yellow("Beta") : Theme.green("Release"),
+                        date(release.publishedAt()),
+                        release.installable() ? release.assetName() : Theme.dim("—"));
                 shown++;
             }
             if (shown == 0) {
-                return "Nur Beta-Releases in " + updater.repository()
-                        + " — 'updater versions --all' zeigt sie.";
+                return Theme.warn("Nur Beta-Releases in " + updater.repository()
+                        + " — 'updater versions --all' zeigt sie.");
             }
+            String text = table.render();
             if (!includePrereleases) {
-                out.add("Beta-Releases ausblenden/zeigen: 'updater versions --all'");
+                text += System.lineSeparator()
+                        + Theme.dim("Beta-Releases ausblenden/zeigen: 'updater versions --all'");
             }
-            return out.toString();
+            return text;
         } catch (RuntimeException e) {
-            return "Fehler: " + messageOf(e);
+            return Theme.fail("Fehler: " + messageOf(e));
         }
     }
 
@@ -118,21 +120,22 @@ public final class UpdaterCommandLine {
         try {
             Optional<Updater.Release> newest = updater.latest();
             if (newest.isEmpty()) {
-                return "Kein Release in " + updater.repository() + " gefunden.";
+                return Theme.warn("Kein Release in " + updater.repository() + " gefunden.");
             }
             Updater.Release release = newest.get();
             Optional<String> running = version.current();
             if (running.isPresent() && running.get().equals(release.version())) {
-                return "Aktuell: " + running.get();
+                return Theme.ok("Aktuell: " + running.get());
             }
             String own = running.orElse(CloudVersion.UNKNOWN);
             String hint = running.isEmpty()
                     ? " (eigene Version unbekannt — läuft die Cloud nicht aus dem Jar?)"
                     : "";
-            return "Update verfügbar: " + own + " → " + release.tag() + hint
-                    + System.lineSeparator() + "Einspielen mit 'updater update'.";
+            return Theme.warn("Update verfügbar: " + own + " " + Theme.arrow() + " " + release.tag() + hint)
+                    + System.lineSeparator()
+                    + Theme.dim("Einspielen mit 'updater update'.");
         } catch (RuntimeException e) {
-            return "Fehler: " + messageOf(e);
+            return Theme.fail("Fehler: " + messageOf(e));
         }
     }
 
@@ -143,18 +146,19 @@ public final class UpdaterCommandLine {
                     : updater.byVersion(argument);
             if (release.isEmpty()) {
                 String wanted = argument == null || argument.isBlank() ? "ein Release" : argument;
-                return "Kein passendes Release gefunden: " + wanted + " (updater versions)";
+                return Theme.warn("Kein passendes Release gefunden: " + wanted + " (updater versions)");
             }
             Updater.Release found = release.get();
             if (!found.installable()) {
-                return "Release " + found.tag() + " hat kein Zip-Artefakt — nichts eingespielt.";
+                return Theme.warn("Release " + found.tag() + " hat kein Zip-Artefakt — nichts eingespielt.");
             }
             int files = updater.install(found);
-            return "Update eingespielt: " + found.tag() + " (" + files + " Dateien, vorherige Fassung unter"
-                    + " update/backup/)" + System.lineSeparator()
-                    + "Neustart nötig — die laufende Cloud arbeitet weiter mit den geladenen Klassen.";
+            return Theme.ok("Update eingespielt: " + found.tag() + " (" + files + " Dateien, vorherige"
+                    + " Fassung unter update/backup/)") + System.lineSeparator()
+                    + Theme.warn("Neustart nötig — die laufende Cloud arbeitet weiter mit den "
+                    + "geladenen Klassen.");
         } catch (RuntimeException e) {
-            return "Fehler: " + messageOf(e);
+            return Theme.fail("Fehler: " + messageOf(e));
         }
     }
 

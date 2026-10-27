@@ -12,6 +12,7 @@ import dev.bytestorm.proto.ServiceType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -19,7 +20,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.StringJoiner;
 import java.util.stream.Collectors;
 
 /**
@@ -107,7 +107,7 @@ public final class GroupCommandLine {
      */
     public String execute(String[] tokens) {
         if (tokens.length == 0) {
-            return USAGE.stripTrailing();
+            return Theme.help(USAGE.stripTrailing());
         }
         if (tokens[0].equalsIgnoreCase("maintenance")) {
             return maintenance(tokens);
@@ -119,10 +119,17 @@ public final class GroupCommandLine {
      * @return die Namen aller Gruppen, alphabetisch; leer wenn die Gruppen nicht lesbar sind
      */
     public List<String> names() {
+        return groupList().stream().map(ServiceGroup::getName).toList();
+    }
+
+    /**
+     * @return alle Gruppen, wie sie der {@link GroupManager} liefert; leer, wenn sie
+     *         nicht lesbar sind (Tab-Vervollständigung und {@code status})
+     */
+    public List<ServiceGroup> groupList() {
         try {
-            return groups.all().stream().map(ServiceGroup::getName).toList();
+            return groups.all();
         } catch (RuntimeException e) {
-            // Die Tab-Vervollständigung darf an einem Fehler nicht scheitern.
             return List.of();
         }
     }
@@ -133,67 +140,70 @@ public final class GroupCommandLine {
         }
         String command = tokens[1].toLowerCase(Locale.ROOT);
         return switch (command) {
-            case "help" -> USAGE.stripTrailing();
+            case "help" -> Theme.help(USAGE.stripTrailing());
             case "list" -> list();
             case "info" -> tokens.length < 3
-                    ? "Gruppenname fehlt (group info <name>)"
+                    ? Theme.warn("Gruppenname fehlt (group info <name>)")
                     : info(tokens[2]);
             case "create" -> create(tokens);
             case "edit" -> edit(tokens);
             case "delete" -> delete(tokens);
             case "scale" -> scale(tokens);
-            default -> "Unbekanntes Gruppen-Kommando: " + command + NL + USAGE.stripTrailing();
+            default -> Theme.warn("Unbekanntes Gruppen-Kommando: " + command) + NL
+                    + Theme.help(USAGE.stripTrailing());
         };
     }
 
     private String list() {
-        List<ServiceGroup> groups = this.groups.all();
+        List<ServiceGroup> groups = new ArrayList<>(this.groups.all());
         if (groups.isEmpty()) {
-            return "Keine Gruppen definiert.";
+            return Theme.dim("Keine Gruppen definiert.");
         }
-        StringJoiner out = new StringJoiner(NL);
-        out.add("Name\tTyp\tPlattform\tVersion\tModus\tMin/Max\tFallback\tWartung");
+        groups.sort(Comparator.comparing(ServiceGroup::getName, String.CASE_INSENSITIVE_ORDER));
+        Table table = Table.of("Name", "Typ", "Plattform", "Version", "Modus", "Min/Max",
+                "Fallback", "Wartung");
         for (ServiceGroup group : groups) {
-            out.add(group.getName() + "\t" + group.getType()
-                    + "\t" + group.getPlatform()
-                    + "\t" + (group.getVersion().isBlank() ? "neueste" : group.getVersion())
-                    + "\t" + group.getMode()
-                    + "\t" + group.getMinServices() + "/"
-                    + (group.getMaxServices() == 0 ? "unbegrenzt" : group.getMaxServices())
-                    + "\t" + (group.getFallback() ? "ja (" + group.getFallbackPriority() + ")" : "nein")
-                    + "\t" + (group.getMaintenance() ? "aktiv" : "aus"));
+            table.row(group.getName(), group.getType().name(), group.getPlatform(),
+                    group.getVersion().isBlank() ? Theme.dim("neueste") : group.getVersion(),
+                    group.getMode().name(),
+                    group.getMinServices() + "/"
+                            + (group.getMaxServices() == 0 ? "unbegrenzt" : group.getMaxServices()),
+                    group.getFallback() ? Theme.green("ja (" + group.getFallbackPriority() + ")")
+                            : Theme.dim("nein"),
+                    Theme.maintenance(group.getMaintenance()));
         }
-        return out.toString();
+        return table.render();
     }
 
     private String info(String name) {
         Optional<ServiceGroup> found = groups.get(name);
         if (found.isEmpty()) {
-            return "Unbekannte Gruppe: " + name;
+            return Theme.warn("Unbekannte Gruppe: " + name);
         }
         ServiceGroup group = found.get();
         StringBuilder out = new StringBuilder()
-                .append("Name: ").append(group.getName()).append(NL)
-                .append("Typ: ").append(group.getType()).append(NL)
-                .append("Plattform: ").append(group.getPlatform())
-                .append(group.getVersion().isBlank() ? " (neueste)" : " " + group.getVersion()).append(NL)
-                .append("Modus: ").append(group.getMode()).append(NL)
-                .append("Services: min ").append(group.getMinServices())
-                .append(", max ").append(group.getMaxServices() == 0 ? "unbegrenzt" : group.getMaxServices())
+                .append(Theme.field("Name", Theme.bold(group.getName()))).append(NL)
+                .append(Theme.field("Typ", group.getType().name())).append(NL)
+                .append(Theme.field("Plattform", group.getPlatform()
+                        + (group.getVersion().isBlank() ? " (neueste)" : " " + group.getVersion()))).append(NL)
+                .append(Theme.field("Modus", group.getMode().name())).append(NL)
+                .append(Theme.field("Services", "min " + group.getMinServices()
+                        + ", max " + (group.getMaxServices() == 0 ? "unbegrenzt" : group.getMaxServices())))
                 .append(NL)
-                .append("Spieler je Service: ").append(group.getMaxPlayers()).append(NL)
-                .append("Speicher: ").append(group.getMemory()).append(" MB").append(NL)
-                .append("Fallback: ").append(group.getFallback() ? "ja" : "nein")
-                .append(" (Priorität ").append(group.getFallbackPriority()).append(")").append(NL)
-                .append("Wartung: ").append(group.getMaintenance() ? "aktiv" : "aus").append(NL)
-                .append("Runtime: ").append(group.hasRuntime() ? group.getRuntime().name() : "global").append(NL)
-                .append("Java-Version: ").append(group.hasJavaVersion() ? group.getJavaVersion() : "global").append(NL)
-                .append("Templates: ").append(group.getTemplatesCount() == 0
-                        ? "keine" : String.join(", ", group.getTemplatesList())).append(NL)
-                .append("JVM-Argumente: ").append(join(group.getJvmArgsList())).append(NL)
-                .append("Java-Argumente: ").append(join(group.getJavaArgsList()));
+                .append(Theme.field("Spieler je Service", String.valueOf(group.getMaxPlayers()))).append(NL)
+                .append(Theme.field("Speicher", group.getMemory() + " MB")).append(NL)
+                .append(Theme.field("Fallback", (group.getFallback() ? Theme.green("ja") : Theme.dim("nein"))
+                        + " (Priorität " + group.getFallbackPriority() + ")")).append(NL)
+                .append(Theme.field("Wartung", Theme.maintenance(group.getMaintenance()))).append(NL)
+                .append(Theme.field("Runtime", group.hasRuntime() ? group.getRuntime().name() : "global")).append(NL)
+                .append(Theme.field("Java-Version",
+                        group.hasJavaVersion() ? String.valueOf(group.getJavaVersion()) : "global")).append(NL)
+                .append(Theme.field("Templates", group.getTemplatesCount() == 0
+                        ? "keine" : String.join(", ", group.getTemplatesList()))).append(NL)
+                .append(Theme.field("JVM-Argumente", join(group.getJvmArgsList()))).append(NL)
+                .append(Theme.field("Java-Argumente", join(group.getJavaArgsList())));
         if (group.getScalingRulesCount() > 0) {
-            out.append(NL).append("Skalierungsregeln:");
+            out.append(NL).append(Theme.section("Skalierungsregeln"));
             for (ScalingRule rule : group.getScalingRulesList()) {
                 out.append(NL).append("  ").append(describe(rule));
             }
@@ -203,7 +213,7 @@ public final class GroupCommandLine {
 
     private String create(String[] tokens) {
         if (tokens.length < 3) {
-            return "Gruppenname fehlt (group create <name> --platform <name>)";
+            return Theme.warn("Gruppenname fehlt (group create <name> --platform <name>)");
         }
         String name = tokens[2];
         ServiceGroup.Builder builder = ServiceGroup.newBuilder()
@@ -217,48 +227,48 @@ public final class GroupCommandLine {
         try {
             apply(builder, options(tokens, 3));
         } catch (IllegalArgumentException e) {
-            return "Fehler: " + e.getMessage();
+            return Theme.fail("Fehler: " + e.getMessage());
         }
         try {
             ServiceGroup created = groups.create(builder.build());
-            return "Gruppe '" + created.getName() + "' angelegt: " + summary(created);
+            return Theme.ok("Gruppe '" + created.getName() + "' angelegt: " + summary(created));
         } catch (GroupValidationException e) {
-            return "Fehler: " + e.getMessage();
+            return Theme.fail("Fehler: " + e.getMessage());
         }
     }
 
     private String edit(String[] tokens) {
         if (tokens.length < 3) {
-            return "Gruppenname fehlt (group edit <name> [optionen])";
+            return Theme.warn("Gruppenname fehlt (group edit <name> [optionen])");
         }
         String name = tokens[2];
         Optional<ServiceGroup> found = groups.get(name);
         if (found.isEmpty()) {
-            return "Unbekannte Gruppe: " + name;
+            return Theme.warn("Unbekannte Gruppe: " + name);
         }
         ServiceGroup.Builder builder = found.get().toBuilder();
         try {
             apply(builder, options(tokens, 3));
         } catch (IllegalArgumentException e) {
-            return "Fehler: " + e.getMessage();
+            return Theme.fail("Fehler: " + e.getMessage());
         }
         try {
             ServiceGroup updated = groups.update(builder.build());
-            return "Gruppe '" + updated.getName() + "' aktualisiert: " + summary(updated);
+            return Theme.ok("Gruppe '" + updated.getName() + "' aktualisiert: " + summary(updated));
         } catch (GroupValidationException e) {
-            return "Fehler: " + e.getMessage();
+            return Theme.fail("Fehler: " + e.getMessage());
         }
     }
 
     private String delete(String[] tokens) {
         if (tokens.length < 3) {
-            return "Gruppenname fehlt (group delete <name>)";
+            return Theme.warn("Gruppenname fehlt (group delete <name>)");
         }
         String name = tokens[2];
         if (!groups.delete(name)) {
-            return "Unbekannte Gruppe: " + name;
+            return Theme.warn("Unbekannte Gruppe: " + name);
         }
-        return "Gruppe '" + name + "' gelöscht (laufende Services laufen weiter).";
+        return Theme.ok("Gruppe '" + name + "' gelöscht (laufende Services laufen weiter).");
     }
 
     /**
@@ -269,17 +279,17 @@ public final class GroupCommandLine {
      */
     private String scale(String[] tokens) {
         if (tokens.length < 4) {
-            return "Verwendung: group scale <name> <anzahl>";
+            return Theme.warn("Verwendung: group scale <name> <anzahl>");
         }
         if (scaler == null) {
-            return "Manuelles Skalieren ist nicht verfügbar.";
+            return Theme.warn("Manuelles Skalieren ist nicht verfügbar.");
         }
         String name = tokens[2];
         int target;
         try {
             target = intOf(tokens[3], "anzahl");
         } catch (IllegalArgumentException e) {
-            return "Fehler: " + e.getMessage();
+            return Theme.fail("Fehler: " + e.getMessage());
         }
 
         List<ScalingDecision> decisions;
@@ -287,9 +297,9 @@ public final class GroupCommandLine {
             decisions = scaler.scaleTo(name, target);
         } catch (IllegalArgumentException | IllegalStateException e) {
             // Unbekannte Gruppe, Ziel außerhalb min/max oder laufender Scaling-Lauf.
-            return "Fehler: " + e.getMessage();
+            return Theme.fail("Fehler: " + e.getMessage());
         }
-        return describeScale(name, target, decisions);
+        return Theme.ok(describeScale(name, target, decisions));
     }
 
     /**
@@ -303,24 +313,27 @@ public final class GroupCommandLine {
                 .filter(decision -> decision.action() == ScalingDecision.Action.START).count();
         long stopped = decisions.stream()
                 .filter(decision -> decision.action() == ScalingDecision.Action.STOP).count();
-        StringBuilder out = new StringBuilder("Gruppe '").append(name).append("': Ziel ").append(target)
-                .append(" — ").append(started).append(" gestartet, ").append(stopped).append(" gestoppt.");
+        StringBuilder out = new StringBuilder("Gruppe '").append(Theme.bold(name)).append("': Ziel ")
+                .append(target).append(" ").append(Theme.dash()).append(" ")
+                .append(Theme.green(started + " gestartet")).append(", ")
+                .append(Theme.yellow(stopped + " gestoppt")).append(".");
         for (ScalingDecision decision : decisions) {
-            out.append(NL).append("  ").append(decision.action()).append(' ')
-                    .append(decision.current()).append(" -> ").append(decision.desired());
+            out.append(NL).append("  ").append(Theme.arrow()).append(' ').append(decision.action())
+                    .append(' ').append(decision.current()).append(" ").append(Theme.arrow()).append(" ")
+                    .append(decision.desired());
             if (!decision.reason().isBlank()) {
-                out.append(": ").append(decision.reason());
+                out.append(": ").append(Theme.dim(decision.reason()));
             }
         }
         groups.get(name).filter(group -> target < group.getMinServices()).ifPresent(group -> out.append(NL)
-                .append("  Hinweis: unter minServices (").append(group.getMinServices())
-                .append(") — der nächste automatische Lauf skaliert wieder hoch."));
+                .append("  ").append(Theme.warn("unter minServices (" + group.getMinServices()
+                        + ") — der nächste automatische Lauf skaliert wieder hoch.")));
         return out.toString();
     }
 
     private String maintenance(String[] tokens) {
         if (tokens.length < 3) {
-            return "Verwendung: maintenance <name> on|off";
+            return Theme.warn("Verwendung: maintenance <name> on|off");
         }
         String name = tokens[1];
         String value = tokens[2].toLowerCase(Locale.ROOT);
@@ -330,15 +343,15 @@ public final class GroupCommandLine {
             default -> null;
         };
         if (maintenance == null) {
-            return "Erwartet 'on' oder 'off': maintenance " + name + " on|off";
+            return Theme.warn("Erwartet 'on' oder 'off': maintenance " + name + " on|off");
         }
         try {
             groups.setMaintenance(name, maintenance);
         } catch (GroupValidationException e) {
-            return "Fehler: " + e.getMessage();
+            return Theme.fail("Fehler: " + e.getMessage());
         }
-        return "Gruppe '" + name + "': Wartungsmodus " + (maintenance ? "aktiv" : "aus")
-                + (maintenance ? " — keine neuen Services, bestehende laufen weiter" : "");
+        return Theme.ok("Gruppe '" + name + "': Wartungsmodus " + Theme.maintenance(maintenance)
+                + (maintenance ? " — keine neuen Services, bestehende laufen weiter" : ""));
     }
 
     private static void apply(ServiceGroup.Builder builder, Map<String, List<String>> options) {

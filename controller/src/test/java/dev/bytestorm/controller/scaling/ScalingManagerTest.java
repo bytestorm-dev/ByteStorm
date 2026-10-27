@@ -20,6 +20,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -550,7 +551,7 @@ class ScalingManagerTest {
         }
 
         @Override
-        public ServiceInfo start(String group) throws ServiceLifecycleException {
+        public ServiceInfo start(String group, Map<String, String> properties) throws ServiceLifecycleException {
             attempts++;
             if (failStarts) {
                 throw new ServiceLifecycleException("Plattform-Jar fehlt");

@@ -22,6 +22,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlayerCommandLineTest {
 
+    /** Entfernt Tabellenabstände: Zellen bleiben durch genau ein Leerzeichen getrennt. */
+    private static String plain(String text) {
+        return String.join("\n", text.lines()
+                .map(line -> line.strip().replaceAll("\\s+", " "))
+                .toList());
+    }
+
     private static final UUID BOB = UUID.fromString("11111111-2222-3333-4444-555555555555");
 
     private final List<PlayerInfo> online = new ArrayList<>();
@@ -57,9 +64,9 @@ class PlayerCommandLineTest {
 
         String output = cli.execute("player list");
 
-        String[] lines = output.split(System.lineSeparator());
-        assertEquals("Name\tUUID\tProxy\tServer", lines[0]);
-        assertEquals("bob\t" + BOB + "\tProxy-1\tLobby-1", lines[1]);
+        String text = plain(output);
+        assertEquals("Name UUID Proxy Server", text.lines().findFirst().orElse(""));
+        assertTrue(text.contains("bob " + BOB + " Proxy-1 Lobby-1"), text);
     }
 
     @Test

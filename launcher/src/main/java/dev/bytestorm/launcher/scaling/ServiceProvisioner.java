@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BiFunction;
@@ -34,6 +35,11 @@ import java.util.stream.Stream;
  * Plattform-Jar aus {@code platforms/} und startet über den injizierten
  * {@link Starter}. Eine Bridge-Jar wird nur installiert, wenn sie als
  * {@code lib/bridge-<platform>.jar} vorliegt.
+ *
+ * <p>Zusätzliche Properties eines einzelnen Starts ({@code services().start(group,
+ * properties)}) werden über die Gruppe dieser einen Definition gelegt; sie landen
+ * damit im {@code ServiceInfo.properties} des Services und überschreiben
+ * gleichnamige Einträge der Gruppe (§9). Die Gruppe selbst bleibt unverändert.
  */
 public final class ServiceProvisioner implements ScalingActions {
 
@@ -97,9 +103,9 @@ public final class ServiceProvisioner implements ScalingActions {
     }
 
     @Override
-    public ServiceInfo start(String group) throws ServiceLifecycleException {
-        ServiceGroup definition = groups.apply(group)
-                .orElseThrow(() -> new ServiceLifecycleException("Unbekannte Gruppe: " + group));
+    public ServiceInfo start(String group, Map<String, String> properties) throws ServiceLifecycleException {
+        ServiceGroup definition = withProperties(groups.apply(group)
+                .orElseThrow(() -> new ServiceLifecycleException("Unbekannte Gruppe: " + group)), properties);
         String name = allocateName(definition);
         ServiceId id = ServiceId.random();
         Path platformJar = platformJar(definition);
@@ -118,6 +124,30 @@ public final class ServiceProvisioner implements ScalingActions {
     @Override
     public ServiceInfo stop(ServiceId id, boolean force) throws ServiceLifecycleException {
         return stopper.stop(id, force);
+    }
+
+    /**
+     * Legt die Properties eines Starts über die der Gruppe. Die Gruppe kommt aus
+     * dem Cache und darf nicht verändert werden, deshalb entsteht bei Bedarf eine
+     * Kopie. Leere Namen werden abgewiesen, statt still im Service zu landen.
+     *
+     * @param group      Gruppen-Definition
+     * @param properties zusätzliche Properties, darf {@code null} sein
+     * @return die Definition für diesen Start
+     */
+    private static ServiceGroup withProperties(ServiceGroup group, Map<String, String> properties) {
+        if (properties == null || properties.isEmpty()) {
+            return group;
+        }
+        for (Map.Entry<String, String> entry : properties.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isBlank()) {
+                throw new IllegalArgumentException("Property-Name darf nicht leer sein");
+            }
+            if (entry.getValue() == null) {
+                throw new IllegalArgumentException("Property '" + entry.getKey() + "' hat keinen Wert");
+            }
+        }
+        return group.toBuilder().putAllProperties(properties).build();
     }
 
     private String allocateName(ServiceGroup group) {
