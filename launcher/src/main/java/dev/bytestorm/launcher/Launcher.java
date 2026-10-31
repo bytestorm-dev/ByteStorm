@@ -1,10 +1,12 @@
 package dev.bytestorm.launcher;
 
+import dev.bytestorm.launcher.download.LibraryInstaller;
 import dev.bytestorm.launcher.layout.CloudLayout;
 
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Einstiegspunkt des Launchers (§5.1).
@@ -16,7 +18,9 @@ import java.nio.file.Path;
  * auf den Parent zurück.
  *
  * <p>Die Bootstrap-Klasse wird bewusst nur über ihren Namen geladen, damit
- * dieses Jar ohne Cloud-Abhängigkeiten kompilierbar bleibt.
+ * dieses Jar ohne Cloud-Abhängigkeiten kompilierbar bleibt. Aus demselben Grund
+ * lädt {@link LibraryInstaller} die Fremd-Jars vorher mit reinem JDK-Code nach:
+ * Erst wenn {@code lib/} vollständig ist, öffnet sich der Classloader.
  */
 public final class Launcher {
 
@@ -47,6 +51,9 @@ public final class Launcher {
             fail("Verzeichnislayout konnte nicht angelegt werden: " + e.getMessage());
             return;
         }
+        if (!librariesReady(layout)) {
+            return;
+        }
 
         try (LibClassLoader loader = LibClassLoader.open(layout)) {
             Thread.currentThread().setContextClassLoader(loader);
@@ -58,6 +65,38 @@ public final class Launcher {
         } catch (ReflectiveOperationException | IOException e) {
             fail(messageOf(e));
         }
+    }
+
+    /**
+     * Prüft und ergänzt die Fremd-Jars in {@code lib/}. Die Liste
+     * {@code lib/dependencies.txt} entsteht im Build; fehlt sie, bringt die
+     * Distribution ihre Jars selbst mit und es passiert nichts.
+     *
+     * @param layout Cloud-Layout
+     * @return {@code true}, wenn alle Bibliotheken bereitstehen
+     */
+    private static boolean librariesReady(CloudLayout layout) {
+        LibraryInstaller.Result result;
+        try {
+            result = LibraryInstaller.install(layout, System.out);
+        } catch (RuntimeException e) {
+            fail("Bibliotheken nicht prüfbar: " + messageOf(e));
+            return false;
+        }
+        if (result.complete()) {
+            return true;
+        }
+        List<LibraryInstaller.Missing> missing = result.missing();
+        StringBuilder message = new StringBuilder(layout.lib() + " ist unvollständig — "
+                + missing.size() + " Bibliothek(en) fehlen:");
+        for (LibraryInstaller.Missing entry : missing) {
+            message.append(System.lineSeparator()).append(entry.describe());
+        }
+        message.append(System.lineSeparator())
+                .append("Bitte die Internetverbindung prüfen und erneut starten oder die Dateien ")
+                .append("an die genannten Pfade legen.");
+        fail(message.toString());
+        return false;
     }
 
     private static String messageOf(Throwable error) {

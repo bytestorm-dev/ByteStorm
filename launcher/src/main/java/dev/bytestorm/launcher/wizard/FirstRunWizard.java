@@ -28,16 +28,21 @@ import java.util.function.Consumer;
 /**
  * Erststart-Wizard (§5.1).
  *
- * <p>Fragt MongoDB, Redis, Runtime, Ports und optionale Module ab, prüft beide
- * Verbindungen vor dem Speichern und wiederholt die Eingabe bei Fehlern, statt
- * abzubrechen. Die Konfiguration wird atomar und mit Rechten {@code 0600}
- * geschrieben, weil sie Zugangsdaten enthält (§20). Erst danach werden die
- * Standardgruppen angelegt und die aktivierten Module samt ihrer Einstellungen in
- * der Modul-Konfiguration hinterlegt — ein aktiviertes REST-Modul bekommt hier
- * seinen API-Key, damit die Cloud es ohne Handarbeit starten kann (§11, §16).
+ * <p>Der Wizard stellt seine Fragen als ein Formular: eine Übersicht mit
+ * aufklappbaren Abschnitten, in der die Tastatur alles erledigt — navigieren,
+ * auswählen, tippen, abschicken. Die Antworten bleiben beim Wechsel der Frage
+ * erhalten, und eine zugeklappte Frage zeigt ihre Antwort als Kurzfassung.
  *
- * <p>Ein Abbruch (Strg+C, EOF oder abgelehnter Wiederholungsversuch) hinterlässt
- * weder eine halbe Konfiguration noch eine temporäre Datei.
+ * <p>Abgeschickt wird erst, wenn alle Felder gültig sind. Danach prüft der Wizard
+ * MongoDB und Redis; schlägt eine Verbindung fehl, öffnet er dasselbe Formular
+ * erneut, springt auf die betroffene Frage und zeigt den Fehler darunter. Ein
+ * Abbruch (Strg+C, EOF oder bestätigtes Esc) hinterlässt weder eine halbe
+ * Konfiguration noch eine temporäre Datei.
+ *
+ * <p>Erst nach erfolgreicher Prüfung wird die Konfiguration atomar und mit
+ * Rechten {@code 0600} geschrieben, weil sie Zugangsdaten enthält (§20). Dann
+ * entstehen die Standardgruppen und die aktivierten Module samt Einstellungen —
+ * ein aktiviertes REST-Modul bekommt hier seinen API-Key (§11, §16).
  */
 public final class FirstRunWizard {
 
@@ -46,6 +51,51 @@ public final class FirstRunWizard {
 
     /** Erlaubte Werte für die Runtime-Abfrage. */
     public static final List<String> RUNTIMES = List.of("PROCESS", "DOCKER");
+
+    /** ID der MongoDB-URI. */
+    public static final String MONGO_URI = "mongo.uri";
+    /** ID des MongoDB-Benutzers. */
+    public static final String MONGO_USER = "mongo.user";
+    /** ID des MongoDB-Passworts. */
+    public static final String MONGO_PASSWORD = "mongo.password";
+    /** ID der MongoDB-Datenbank. */
+    public static final String MONGO_DATABASE = "mongo.database";
+    /** ID der Redis-Adresse. */
+    public static final String REDIS_ADDRESS = "redis.address";
+    /** ID des Redis-Passworts. */
+    public static final String REDIS_PASSWORD = "redis.password";
+    /** ID der Runtime. */
+    public static final String RUNTIME = "runtime";
+    /** ID des Docker-Hosts. */
+    public static final String DOCKER_HOST = "docker.host";
+    /** ID des Proxy-Ports. */
+    public static final String PROXY_PORT = "ports.proxy";
+    /** ID des Server-Startports. */
+    public static final String SERVER_PORT = "ports.serverStart";
+    /** ID der REST-Freigabe. */
+    public static final String REST = "modules.rest";
+    /** ID des REST-Hosts. */
+    public static final String REST_HOST = "rest.host";
+    /** ID des REST-Ports. */
+    public static final String REST_PORT = "rest.port";
+    /** ID des REST-API-Keys. */
+    public static final String REST_API_KEY = "rest.apiKey";
+    /** ID der Discord-Freigabe. */
+    public static final String DISCORD = "modules.discord";
+
+    private static final String PORT_MESSAGE = "Bitte eine Portnummer zwischen 1 und 65535 eingeben.";
+    private static final String REST_KEY_MESSAGE =
+            "Der API-Key braucht mindestens " + DefaultModules.REST_MIN_KEY_LENGTH
+                    + " Zeichen, sonst verweigert das REST-Modul den Start.";
+
+    private static final Question.Validator PORT = (value, answers) -> {
+        try {
+            int port = Integer.parseInt(value.trim());
+            return port >= 1 && port <= 65535 ? null : PORT_MESSAGE;
+        } catch (NumberFormatException e) {
+            return PORT_MESSAGE;
+        }
+    };
 
     private final WizardIo io;
     private final ConnectionTester tester;
@@ -88,55 +138,29 @@ public final class FirstRunWizard {
         Objects.requireNonNull(cloudDirectory, "cloudDirectory");
         Path configFile = cloudDirectory.resolve(CONFIG_FILE);
 
-        MongoSettings mongo = askMongo();
-        RedisSettings redis = askRedis();
-        RuntimeType runtime = askRuntime();
-        String dockerHost = runtime == RuntimeType.DOCKER
-                ? io.ask("Docker-Host", DockerSettings.DEFAULT_HOST)
-                : DockerSettings.DEFAULT_HOST;
-        int proxyPort = askPort("Proxy-Port", PortSettings.DEFAULT_PROXY);
-        int serverPort = askPort("Server-Startport", PortSettings.DEFAULT_SERVER_START);
-        boolean rest = io.confirm("REST-Modul aktivieren?", false);
-        // Nur fragen, was das Modul zum Starten braucht (§11): Adresse, Port und Key.
-        String restHost = rest ? io.ask("REST-Host", DefaultModules.REST_DEFAULT_HOST) : "";
-        int restPort = rest ? askPort("REST-Port", DefaultModules.REST_DEFAULT_PORT) : 0;
-        String restKey = rest ? askRestKey() : "";
-        boolean discord = io.confirm("Discord-Modul aktivieren?", false);
-        List<ModuleConfig> modules = moduleConfigs(rest, restHost, restPort, restKey, discord);
-
-        CloudConfig config = new CloudConfig(
-                mongo,
-                redis,
-                runtime,
-                new DockerSettings(dockerHost),
-                new PortSettings(proxyPort, serverPort),
-                // Einmal erzeugt und nie neu gewürfelt: laufende Proxies bleiben sonst abgekoppelt.
-                new ProxySettings(ProxySettings.generateSecret()),
-                new ModuleSettings(rest, discord),
-                new ScalingSettings(0),
-                new CrashSettings(0, null));
-
-        try {
-            new ConfigLoader().validate(config);
-        } catch (ConfigException e) {
-            throw new WizardAbortedException("Ungültige Eingaben: " + e.getMessage());
-        }
+        Questionnaire form = form();
+        Answers answers = io.fill(form, Answers.empty(), QuestionnaireNotice.none());
+        CloudConfig config = complete(form, answers);
 
         ConfigWriter.write(configFile, config);
         io.message("Konfiguration gespeichert: " + configFile);
 
         try {
-            defaultGroups.accept(mongo);
+            defaultGroups.accept(config.mongo());
             io.message("Standardgruppen 'Proxy' und 'Lobby' sind angelegt (falls noch nicht vorhanden).");
         } catch (RuntimeException e) {
             io.message("Hinweis: Standardgruppen konnten nicht angelegt werden: " + describe(e));
         }
+        List<ModuleConfig> modules = modules(form, answers, config);
         if (!modules.isEmpty()) {
             try {
-                moduleSetup.accept(mongo, modules);
+                moduleSetup.accept(config.mongo(), modules);
                 io.message("Modul-Konfiguration gespeichert: " + String.join(", ",
                         modules.stream().map(ModuleConfig::name).toList())
-                        + (rest ? " — das REST-Modul startet auf " + restHost + ":" + restPort : ""));
+                        + (config.modules().rest()
+                        ? " — das REST-Modul startet auf " + form.question(REST_HOST).effective(answers)
+                        + ":" + form.question(REST_PORT).effective(answers)
+                        : ""));
             } catch (RuntimeException e) {
                 io.message("Hinweis: Modul-Konfiguration konnte nicht gespeichert werden: " + describe(e));
             }
@@ -145,117 +169,212 @@ public final class FirstRunWizard {
     }
 
     /**
+     * Schickt das Formular ab und prüft die Verbindungen. Schlägt eine Prüfung
+     * fehl, öffnet sich das Formular erneut mit dem Fehler an der betroffenen
+     * Frage; die bisherigen Antworten bleiben stehen.
+     */
+    private CloudConfig complete(Questionnaire form, Answers answers) {
+        while (true) {
+            CloudConfig config = config(form, answers);
+            try {
+                new ConfigLoader().validate(config);
+            } catch (ConfigException e) {
+                throw new WizardAbortedException("Ungültige Eingaben: " + e.getMessage());
+            }
+            QuestionnaireNotice notice = probe(config);
+            if (notice == null) {
+                return config;
+            }
+            answers = io.fill(form, answers, notice);
+        }
+    }
+
+    /**
+     * @return die Meldung der ersten fehlgeschlagenen Verbindung oder {@code null}
+     */
+    private QuestionnaireNotice probe(CloudConfig config) {
+        try {
+            tester.testMongo(config.mongo());
+        } catch (RuntimeException e) {
+            return new QuestionnaireNotice(MONGO_URI, "MongoDB nicht erreichbar: " + describe(e));
+        }
+        try {
+            tester.testRedis(config.redis());
+        } catch (RuntimeException e) {
+            return new QuestionnaireNotice(REDIS_ADDRESS,
+                    "Redis nicht erreichbar oder Passwort falsch: " + describe(e));
+        }
+        return null;
+    }
+
+    /**
+     * @return das Formular des Erststarts
+     */
+    static Questionnaire form() {
+        List<Question> questions = List.of(
+                Question.text(MONGO_URI, "MongoDB-URI")
+                        .description("Adresse der Datenbank, in der Gruppen, Templates und Module liegen.")
+                        .defaultValue(MongoSettings.DEFAULT_URI)
+                        .validate((value, answers) -> startsWithScheme(value, "mongodb://", "mongodb+srv://")
+                                ? null
+                                : "Die MongoDB-URI muss mit mongodb:// oder mongodb+srv:// beginnen.")
+                        .build(),
+                Question.text(MONGO_USER, "MongoDB-Benutzer (optional)")
+                        .description("Nur nötig, wenn die Datenbank eine Anmeldung verlangt.")
+                        .build(),
+                Question.secret(MONGO_PASSWORD, "MongoDB-Passwort")
+                        .description("Wird zusammen mit dem Benutzer prozentkodiert in die URI gesetzt.")
+                        // Ohne Benutzer braucht die URI kein Passwort; die Frage erscheint dann gar nicht.
+                        .visibleWhen(answers -> !answers.text(MONGO_USER).isBlank())
+                        .validate((value, answers) -> value.isBlank()
+                                ? "MongoDB-Passwort ist Pflicht, wenn ein Benutzer angegeben ist."
+                                : null)
+                        .build(),
+                Question.text(MONGO_DATABASE, "MongoDB-Datenbank")
+                        .defaultValue(MongoSettings.DEFAULT_DATABASE)
+                        .required(true)
+                        .build(),
+                Question.text(REDIS_ADDRESS, "Redis-Adresse")
+                        .description("Cache, Registry und Event-Bus der Cloud.")
+                        .defaultValue(RedisSettings.DEFAULT_ADDRESS)
+                        .validate((value, answers) -> startsWithScheme(value, "redis://", "rediss://")
+                                ? null
+                                : "Die Redis-Adresse muss mit redis:// oder rediss:// beginnen.")
+                        .build(),
+                Question.secret(REDIS_PASSWORD, "Redis-Passwort")
+                        .description("Pflicht: Die Cloud verbindet sich nur mit Authentifizierung (§20).")
+                        .validate((value, answers) -> value.isBlank()
+                                ? "Redis-Passwort ist Pflicht (§20)."
+                                : null)
+                        .build(),
+                Question.select(RUNTIME, "Runtime")
+                        .description("Bestimmt, wie jeder Service startet.")
+                        .option(RuntimeType.PROCESS.name(), RuntimeType.PROCESS.name(),
+                                "Eigener Java-Prozess auf diesem Host; nichts weiter nötig.")
+                        .option(RuntimeType.DOCKER.name(), RuntimeType.DOCKER.name(),
+                                "Container über den Docker-Host.")
+                        .defaultValue(RuntimeType.PROCESS.name())
+                        .build(),
+                Question.text(DOCKER_HOST, "Docker-Host")
+                        .description("Socket oder TCP-Adresse des Docker-Daemons.")
+                        .defaultValue(DockerSettings.DEFAULT_HOST)
+                        .visibleWhen(answers -> RuntimeType.DOCKER.name().equals(answers.text(RUNTIME)))
+                        .build(),
+                Question.text(PROXY_PORT, "Proxy-Port")
+                        .description("Port, auf dem Spieler die Cloud erreichen.")
+                        .defaultValue(String.valueOf(PortSettings.DEFAULT_PROXY))
+                        .validate(PORT)
+                        .build(),
+                Question.text(SERVER_PORT, "Server-Startport")
+                        .description("Erster Port des Pools für Server-Services; aufwärts bis 65535.")
+                        .defaultValue(String.valueOf(PortSettings.DEFAULT_SERVER_START))
+                        .validate(PORT)
+                        .build(),
+                Question.confirm(REST, "REST-Modul aktivieren?")
+                        .description("Stellt die öffentliche API über HTTP bereit.")
+                        .build(),
+                Question.text(REST_HOST, "REST-Host")
+                        .description("Netzadresse, auf der das Modul lauscht.")
+                        .defaultValue(DefaultModules.REST_DEFAULT_HOST)
+                        .visibleWhen(FirstRunWizard::restEnabled)
+                        .build(),
+                Question.text(REST_PORT, "REST-Port")
+                        .defaultValue(String.valueOf(DefaultModules.REST_DEFAULT_PORT))
+                        .validate(PORT)
+                        .visibleWhen(FirstRunWizard::restEnabled)
+                        .build(),
+                Question.secret(REST_API_KEY, "REST-API-Key")
+                        .description("Mindestens " + DefaultModules.REST_MIN_KEY_LENGTH
+                                + " Zeichen. Der Key geht ausschließlich in die Datenbank (§20).")
+                        .visibleWhen(FirstRunWizard::restEnabled)
+                        .validate((value, answers) -> value.trim().length() >= DefaultModules.REST_MIN_KEY_LENGTH
+                                ? null
+                                : REST_KEY_MESSAGE)
+                        .build(),
+                Question.confirm(DISCORD, "Discord-Modul aktivieren?")
+                        .description("Meldet Status und Ereignisse an Discord.")
+                        .build());
+        return new Questionnaire("Ein paar Fragen zur Einrichtung",
+                "Die Antworten landen in config/cloud.json.", questions);
+    }
+
+    private static boolean restEnabled(Answers answers) {
+        return answers.flag(REST);
+    }
+
+    private static boolean startsWithScheme(String value, String... schemes) {
+        String trimmed = value.trim();
+        for (String scheme : schemes) {
+            if (trimmed.startsWith(scheme)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Baut die Konfiguration aus den Antworten. Alle Werte sind an dieser Stelle
+     * geprüft; leere Textfelder greifen auf ihre Vorschlagswerte zurück.
+     */
+    static CloudConfig config(Questionnaire form, Answers answers) {
+        String user = value(form, answers, MONGO_USER).trim();
+        String password = answers.text(MONGO_PASSWORD).isBlank() ? null : answers.text(MONGO_PASSWORD);
+        MongoSettings mongo = new MongoSettings(
+                MongoUris.withCredentials(value(form, answers, MONGO_URI), user, password),
+                value(form, answers, MONGO_DATABASE));
+
+        RuntimeType runtime = RuntimeType.valueOf(
+                value(form, answers, RUNTIME).toUpperCase(Locale.ROOT));
+        String dockerHost = runtime == RuntimeType.DOCKER
+                ? value(form, answers, DOCKER_HOST)
+                : DockerSettings.DEFAULT_HOST;
+
+        boolean rest = answers.flag(REST);
+        return new CloudConfig(
+                mongo,
+                new RedisSettings(value(form, answers, REDIS_ADDRESS), answers.text(REDIS_PASSWORD)),
+                runtime,
+                new DockerSettings(dockerHost),
+                new PortSettings(port(form, answers, PROXY_PORT), port(form, answers, SERVER_PORT)),
+                // Einmal erzeugt und nie neu gewürfelt: laufende Proxies bleiben sonst abgekoppelt.
+                new ProxySettings(ProxySettings.generateSecret()),
+                new ModuleSettings(rest, answers.flag(DISCORD)),
+                new ScalingSettings(0),
+                new CrashSettings(0, null));
+    }
+
+    /**
      * Sammelt die Konfiguration der aktivierten Module. Nur aktivierte Module
      * bekommen einen Eintrag; der API-Key geht ausschließlich nach MongoDB, nie in
      * die Antwort oder in eine Meldung (§20).
-     *
-     * @param rest     REST-Modul aktiv
-     * @param restHost Netzadresse des REST-Moduls
-     * @param restPort Port des REST-Moduls
-     * @param restKey  API-Key des REST-Moduls
-     * @param discord  Discord-Modul aktiv
-     * @return Konfigurationen für {@code modules_config}
      */
-    private static List<ModuleConfig> moduleConfigs(boolean rest, String restHost, int restPort,
-                                                    String restKey, boolean discord) {
+    private static List<ModuleConfig> modules(Questionnaire form, Answers answers, CloudConfig config) {
         List<ModuleConfig> modules = new ArrayList<>(2);
-        if (rest) {
+        if (config.modules().rest()) {
             modules.add(new ModuleConfig(DefaultModules.REST, true, Map.of(
-                    DefaultModules.REST_HOST, restHost,
-                    DefaultModules.REST_PORT, String.valueOf(restPort),
-                    DefaultModules.REST_API_KEY, restKey)));
+                    DefaultModules.REST_HOST, value(form, answers, REST_HOST),
+                    DefaultModules.REST_PORT, String.valueOf(port(form, answers, REST_PORT)),
+                    DefaultModules.REST_API_KEY, answers.text(REST_API_KEY).trim())));
         }
-        if (discord) {
+        if (config.modules().discord()) {
             modules.add(new ModuleConfig("discord", true, Map.of()));
         }
         return List.copyOf(modules);
     }
 
-    /**
-     * Fragt den API-Key ab und wiederholt, solange er zu kurz ist — sonst
-     * verweigert das REST-Modul beim Start den Dienst.
-     *
-     * @return der geprüfte Key
-     */
-    private String askRestKey() {
-        while (true) {
-            String key = io.askSecret("REST-API-Key (mindestens "
-                    + DefaultModules.REST_MIN_KEY_LENGTH + " Zeichen)");
-            if (key != null && key.trim().length() >= DefaultModules.REST_MIN_KEY_LENGTH) {
-                return key.trim();
-            }
-            io.message("Der API-Key braucht mindestens " + DefaultModules.REST_MIN_KEY_LENGTH
-                    + " Zeichen, sonst verweigert das REST-Modul den Start.");
+    private static String value(Questionnaire form, Answers answers, String id) {
+        return form.question(id).effective(answers).trim();
+    }
+
+    private static int port(Questionnaire form, Answers answers, String id) {
+        String raw = value(form, answers, id);
+        if (raw.isEmpty()) {
+            return 0;
         }
-    }
-
-    private MongoSettings askMongo() {
-        while (true) {
-            String uri = io.ask("MongoDB-URI", MongoSettings.DEFAULT_URI);
-            String username = io.ask("MongoDB-Benutzer (optional)", "");
-            String password = null;
-            if (!username.isBlank()) {
-                password = io.askSecret("MongoDB-Passwort");
-                if (password == null || password.isBlank()) {
-                    io.message("MongoDB-Passwort ist Pflicht, wenn ein Benutzer angegeben ist.");
-                    continue;
-                }
-            }
-            MongoSettings settings = new MongoSettings(
-                    MongoUris.withCredentials(uri, username, password),
-                    io.ask("MongoDB-Datenbank", MongoSettings.DEFAULT_DATABASE));
-            try {
-                tester.testMongo(settings);
-                return settings;
-            } catch (RuntimeException e) {
-                io.message("MongoDB nicht erreichbar: " + describe(e));
-                retry("MongoDB-Zugang erneut eingeben?");
-            }
-        }
-    }
-
-    private RedisSettings askRedis() {
-        while (true) {
-            String address = io.ask("Redis-Adresse", RedisSettings.DEFAULT_ADDRESS);
-            String password = io.askSecret("Redis-Passwort");
-            if (password == null || password.isBlank()) {
-                io.message("Redis-Passwort ist Pflicht (§20).");
-                continue;
-            }
-            RedisSettings settings = new RedisSettings(address, password);
-            try {
-                tester.testRedis(settings);
-                return settings;
-            } catch (RuntimeException e) {
-                io.message("Redis nicht erreichbar oder Passwort falsch: " + describe(e));
-                retry("Redis-Zugang erneut eingeben?");
-            }
-        }
-    }
-
-    private RuntimeType askRuntime() {
-        String choice = io.choose("Runtime", RUNTIMES, RuntimeType.PROCESS.name());
-        return RuntimeType.valueOf(choice.toUpperCase(Locale.ROOT));
-    }
-
-    private int askPort(String label, int defaultValue) {
-        while (true) {
-            String raw = io.ask(label, String.valueOf(defaultValue));
-            try {
-                int port = Integer.parseInt(raw.trim());
-                if (port >= 1 && port <= 65535) {
-                    return port;
-                }
-            } catch (NumberFormatException ignored) {
-                // unten erneut fragen
-            }
-            io.message("Bitte eine Portnummer zwischen 1 und 65535 eingeben.");
-        }
-    }
-
-    private void retry(String prompt) {
-        if (!io.confirm(prompt, true)) {
-            throw new WizardAbortedException("Einrichtung auf Wunsch abgebrochen");
+        try {
+            return Integer.parseInt(raw);
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 

@@ -1,3 +1,72 @@
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import java.io.File
+import java.security.MessageDigest
+
+/**
+ * Leitet den Classifier aus dem Dateinamen ab: Maven legt klassifizierte
+ * Artefakte als {@code <artifact>-<version>-<classifier>.jar} ab.
+ */
+fun classifierOf(fileName: String, artifactId: String, version: String): String {
+    val plain = "$artifactId-$version.jar"
+    if (fileName == plain) {
+        return ""
+    }
+    val prefix = "$artifactId-$version-"
+    return if (fileName.startsWith(prefix) && fileName.endsWith(".jar")) {
+        fileName.removePrefix(prefix).removeSuffix(".jar")
+    } else {
+        ""
+    }
+}
+
+/** @return SHA-256 als Hex */
+fun sha256(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(8192)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) {
+                break
+            }
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+}
+
+val externalJars = provider {
+    configurations.runtimeClasspath.get().incoming.artifactView {
+        componentFilter { it is ModuleComponentIdentifier }
+    }.artifacts.artifacts.map { it.file }.toSet()
+}
+
+// Liste der Fremd-Jars, die der Launcher beim Start nachlädt (§5.1). Format:
+// groupId:artifactId:version:classifier:sha256 — der Classifier darf leer sein.
+val dependencyList = tasks.register("dependencyList") {
+    group = "distribution"
+    description = "Schreibt die nachzuladenden Fremd-Jars mit SHA-256 nach lib/dependencies.txt."
+
+    val runtime = configurations.runtimeClasspath
+    inputs.files(runtime)
+    outputs.file(layout.buildDirectory.file("distribution/dependencies.txt"))
+
+    doLast {
+        val artifacts = runtime.get().incoming.artifactView {
+            componentFilter { it is ModuleComponentIdentifier }
+        }.artifacts.artifacts
+        val lines = artifacts.mapNotNull { artifact ->
+            val module = artifact.id.componentIdentifier as? ModuleComponentIdentifier ?: return@mapNotNull null
+            val classifier = classifierOf(artifact.file.name, module.module, module.version)
+            "${module.group}:${module.module}:${module.version}:$classifier:${sha256(artifact.file)}"
+        }.distinct().sorted()
+
+        val file = layout.buildDirectory.file("distribution/dependencies.txt").get().asFile
+        file.parentFile.mkdirs()
+        file.writeText(lines.joinToString("\n", postfix = if (lines.isEmpty()) "" else "\n"))
+    }
+}
+
 dependencies {
     // Bootstrap ist der Composition Root: Config, Provider, Healthcheck, Shutdown.
     implementation(project(":core"))
@@ -23,10 +92,12 @@ tasks.jar {
     }
 }
 
-// Fertige Cloud-Distribution: das Launcher-Jar plus alle Laufzeit-Jars in lib/.
+// Fertige Cloud-Distribution: das Launcher-Jar, die ByteStorm-Module und die
+// Liste der Fremd-Jars. Die Fremd-Jars selbst lädt der Launcher beim ersten
+// Start von Maven Central nach (§5.1) — das Zip bleibt dadurch klein.
 // Die Bridge-Plugins liegen als lib/bridge-<platform>.jar bereit, weil der
 // ServiceProvisioner sie genau dort sucht (§12.2). Wer das Zip in ein
-// Cloud-Verzeichnis entpackt, kann die Cloud direkt starten.
+// Cloud-Verzeichnis entpackt, kann die Cloud starten.
 val bridgePlatforms = listOf("bungeecord", "paper", "velocity")
 
 // Optionale Module liegen als lib/module-<name>.jar bereit: Dort findet sie der
@@ -51,9 +122,14 @@ tasks.register<Zip>("distributionZip") {
         into("lib")
         rename { "launcher.jar" }
     }
-    from(configurations.runtimeClasspath) {
+    // Nur die ByteStorm-Jars bleiben im Zip; Fremd-Jars kommen über den Launcher.
+    from(provider { configurations.runtimeClasspath.get().filterNot { it in externalJars.get() } }) {
         into("lib")
     }
+    from(dependencyList) {
+        into("lib")
+    }
+    dependsOn(configurations.runtimeClasspath, dependencyList)
     bridgePlatforms.forEach { platform ->
         from(project(":bridge:bridge-$platform").tasks.named("shadowJar")) {
             into("lib")

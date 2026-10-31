@@ -99,7 +99,7 @@ class FirstRunWizardTest {
         assertEquals("REST-Modul aktivieren?", restQuestions.get(0));
         assertEquals("REST-Host", restQuestions.get(1));
         assertEquals("REST-Port", restQuestions.get(2));
-        assertEquals("REST-API-Key (mindestens 8 Zeichen)", restQuestions.get(3));
+        assertEquals("REST-API-Key", restQuestions.get(3));
     }
 
     @Test
@@ -146,32 +146,31 @@ class FirstRunWizardTest {
     void retriesMongoAfterAFailedConnection() throws Exception {
         mongoFailures.set(1);
         ScriptedWizardIo io = minimalAnswers()
-                .answer("MongoDB-URI", "mongodb://falsch:27017", "mongodb://richtig:27017")
-                .answer("MongoDB-Benutzer", "", "")
-                .answer("MongoDB-Datenbank", "cloud", "cloud")
-                .answer("MongoDB-Zugang erneut eingeben?", "j");
+                .answer("MongoDB-URI", "mongodb://falsch:27017", "mongodb://richtig:27017");
 
         CloudConfig config = wizard(io).run(temp);
 
         assertEquals(2, mongoChecks.size());
         assertEquals("mongodb://richtig:27017", config.mongo().uri());
-        assertTrue(io.messages().stream().anyMatch(message -> message.contains("MongoDB nicht erreichbar")));
+        assertTrue(io.notices().stream().anyMatch(message -> message.contains("MongoDB nicht erreichbar")),
+                io.notices().toString());
+        assertEquals(2, io.asked().stream().filter("MongoDB-URI"::equals).count(),
+                "die betroffene Frage wird erneut gestellt");
     }
 
     @Test
     void embedsMongoCredentialsAndAsksAgainWithoutAPassword() throws Exception {
         ScriptedWizardIo io = minimalAnswers()
-                .answer("MongoDB-URI", "mongodb://db:27017", "mongodb://db:27017")
-                .answer("MongoDB-Benutzer", "admin", "admin")
-                .answer("MongoDB-Passwort", "", "p@ss:wort")
-                .answer("MongoDB-Datenbank", "cloud");
+                .answer("MongoDB-Benutzer", "admin")
+                .answer("MongoDB-Passwort", "", "p@ss:wort");
 
         CloudConfig config = wizard(io).run(temp);
 
         assertEquals(1, mongoChecks.size());
         assertEquals("mongodb://admin:p%40ss%3Awort@db:27017", mongoChecks.get(0).uri());
         assertEquals(mongoChecks.get(0), config.mongo());
-        assertTrue(io.messages().stream().anyMatch(message -> message.contains("Passwort ist Pflicht")));
+        assertTrue(io.messages().stream().anyMatch(message -> message.contains("Passwort ist Pflicht")),
+                io.messages().toString());
     }
 
     @Test
@@ -179,13 +178,14 @@ class FirstRunWizardTest {
         redisFailures.set(1);
         ScriptedWizardIo io = minimalAnswers()
                 .answer("Redis-Adresse", "redis://cache:6379", "redis://cache:6379")
-                .answer("Redis-Passwort", "falsch", "geheim")
-                .answer("Redis-Zugang erneut eingeben?", "j");
+                .answer("Redis-Passwort", "falsch", "geheim");
 
         CloudConfig config = wizard(io).run(temp);
 
         assertEquals(2, redisChecks.size());
         assertEquals("geheim", config.redis().password());
+        assertTrue(io.notices().stream().anyMatch(message -> message.contains("Redis nicht erreichbar")),
+                io.notices().toString());
     }
 
     @Test
@@ -213,15 +213,16 @@ class FirstRunWizardTest {
     }
 
     @Test
-    void declinedRetryAbortsWithoutWriting() {
+    void anAbortedSecondRunWritesNothing() {
         mongoFailures.set(1);
         ScriptedWizardIo io = minimalAnswers()
                 .answer("MongoDB-URI", "mongodb://falsch:27017")
-                .answer("MongoDB-Zugang erneut eingeben?", "n");
+                .abortOnNotice();
 
         assertThrows(WizardAbortedException.class, () -> wizard(io).run(temp));
 
         assertFalse(Files.exists(temp.resolve(FirstRunWizard.CONFIG_FILE)));
+        assertTrue(io.notices().stream().anyMatch(message -> message.contains("MongoDB nicht erreichbar")));
     }
 
     @Test
@@ -237,6 +238,13 @@ class FirstRunWizardTest {
     }
 
     @Test
+    void processRuntimeKeepsTheDefaultDockerHost() throws Exception {
+        CloudConfig config = wizard(minimalAnswers()).run(temp);
+
+        assertEquals(dev.bytestorm.core.config.DockerSettings.DEFAULT_HOST, config.docker().host());
+    }
+
+    @Test
     void keepsTheConfigWhenDefaultGroupsFail() throws Exception {
         groupCreationFails = true;
 
@@ -245,6 +253,23 @@ class FirstRunWizardTest {
 
         assertTrue(Files.exists(temp.resolve(FirstRunWizard.CONFIG_FILE)));
         assertTrue(io.messages().stream().anyMatch(message -> message.contains("Standardgruppen konnten nicht")));
+    }
+
+    @Test
+    void theFormOnlyShowsQuestionsThatApply() {
+        Questionnaire form = FirstRunWizard.form();
+        Answers answers = Answers.empty().with(FirstRunWizard.MONGO_USER, "");
+
+        assertFalse(form.question(FirstRunWizard.MONGO_PASSWORD).visible(answers),
+                "ohne Benutzer braucht es kein Passwort");
+        assertTrue(form.question(FirstRunWizard.MONGO_PASSWORD).visible(
+                answers.with(FirstRunWizard.MONGO_USER, "admin")));
+        assertFalse(form.question(FirstRunWizard.DOCKER_HOST).visible(answers));
+        assertTrue(form.question(FirstRunWizard.DOCKER_HOST)
+                .visible(answers.with(FirstRunWizard.RUNTIME, "DOCKER")));
+        assertFalse(form.question(FirstRunWizard.REST_HOST).visible(answers));
+        assertTrue(form.question(FirstRunWizard.REST_HOST)
+                .visible(answers.with(FirstRunWizard.REST, Answers.YES)));
     }
 
     private ScriptedWizardIo minimalAnswers() {

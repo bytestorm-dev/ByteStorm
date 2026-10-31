@@ -9,23 +9,33 @@ import java.util.Objects;
  * <p>Die erwartete SHA-256-Prüfsumme ist Pflicht: Ein Download ohne
  * Integritätsprüfung wird nicht akzeptiert (§5.1, §20).
  *
+ * <p>Einige Artefakte liegen als klassifizierte Variante vor — etwa
+ * {@code netty-transport-native-epoll} mit {@code linux-x86_64}. Der Classifier
+ * gehört deshalb zum Dateinamen und zum Repository-Pfad.
+ *
  * @param groupId    Maven-Gruppe, z. B. {@code eu.koboo}
  * @param artifactId Maven-Artefakt, z. B. {@code en2do}
  * @param version    Version, z. B. {@code 3.3.3}
+ * @param classifier optionale Variante, z. B. {@code linux-x86_64}
  * @param sha256     erwartete Prüfsumme als 64 Hex-Zeichen
  */
-public record Dependency(String groupId, String artifactId, String version, String sha256) {
+public record Dependency(String groupId, String artifactId, String version, String classifier, String sha256) {
 
     /**
      * @param groupId    Maven-Gruppe
      * @param artifactId Maven-Artefakt
      * @param version    Version
+     * @param classifier optionale Variante, {@code null}/leer für das Hauptartefakt
      * @param sha256     erwartete Prüfsumme, Groß-/Kleinschreibung egal
      */
     public Dependency {
         groupId = requireCoordinate(groupId, "groupId");
         artifactId = requireCoordinate(artifactId, "artifactId");
         version = requireCoordinate(version, "version");
+        classifier = classifier == null || classifier.isBlank() ? null : classifier.trim();
+        if (classifier != null && !classifier.matches("[A-Za-z0-9._-]+")) {
+            throw new IllegalArgumentException("classifier enthält unerlaubte Zeichen: " + classifier);
+        }
         Objects.requireNonNull(sha256, "sha256");
         sha256 = sha256.trim().toLowerCase(Locale.ROOT);
         if (!sha256.matches("[0-9a-f]{64}")) {
@@ -34,10 +44,20 @@ public record Dependency(String groupId, String artifactId, String version, Stri
     }
 
     /**
+     * @param groupId    Maven-Gruppe
+     * @param artifactId Maven-Artefakt
+     * @param version    Version
+     * @param sha256     erwartete Prüfsumme
+     */
+    public Dependency(String groupId, String artifactId, String version, String sha256) {
+        this(groupId, artifactId, version, null, sha256);
+    }
+
+    /**
      * @return Dateiname im {@code lib/}-Verzeichnis
      */
     public String fileName() {
-        return artifactId + "-" + version + ".jar";
+        return artifactId + "-" + version + (classifier == null ? "" : "-" + classifier) + ".jar";
     }
 
     /**
@@ -49,10 +69,11 @@ public record Dependency(String groupId, String artifactId, String version, Stri
     }
 
     /**
-     * @return {@code groupId:artifactId:version}
+     * @return {@code groupId:artifactId:version} inklusive Classifier, falls vorhanden
      */
     public String coordinates() {
-        return groupId + ":" + artifactId + ":" + version;
+        return groupId + ":" + artifactId + ":" + version
+                + (classifier == null ? "" : ":" + classifier);
     }
 
     private static String requireCoordinate(String value, String field) {

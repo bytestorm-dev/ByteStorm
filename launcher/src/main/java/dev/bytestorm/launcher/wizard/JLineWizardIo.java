@@ -1,5 +1,6 @@
 package dev.bytestorm.launcher.wizard;
 
+import dev.bytestorm.cli.Theme;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -29,6 +30,30 @@ public final class JLineWizardIo implements WizardIo, AutoCloseable {
     public JLineWizardIo() throws IOException {
         this.terminal = TerminalBuilder.builder().system(true).build();
         this.reader = LineReaderBuilder.builder().terminal(terminal).build();
+    }
+
+    /**
+     * Zeigt den Fragebogen als Panel. Kann das Terminal keine Cursor-Steuerung,
+     * werden die Fragen einzeln am Prompt abgefragt (§5.1).
+     *
+     * @param form    Fragebogen
+     * @param initial bereits gegebene Antworten
+     * @param notice  Meldung, die den Lauf ausgelöst hat
+     * @return die gesammelten Antworten
+     */
+    @Override
+    public Answers fill(Questionnaire form, Answers initial, QuestionnaireNotice notice) {
+        String type = terminal.getType();
+        Theme.apply(type);
+        if (Theme.DUMB.equalsIgnoreCase(type)) {
+            return WizardIo.super.fill(form, initial, notice);
+        }
+        try {
+            return new QuestionnaireScreen(terminal, form, initial, notice).run();
+        } catch (IllegalStateException e) {
+            // Kein Raw-Modus: lieber einzeln fragen als gar nicht einrichten.
+            return WizardIo.super.fill(form, initial, notice);
+        }
     }
 
     @Override

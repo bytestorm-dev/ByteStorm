@@ -19,6 +19,20 @@ class DependencyTest {
     }
 
     @Test
+    void keepsAClassifierInFileNameAndPath() {
+        Dependency dependency = new Dependency("io.netty", "netty-transport-native-epoll",
+                "4.2.10.Final", "linux-x86_64", SHA);
+
+        assertEquals("netty-transport-native-epoll-4.2.10.Final-linux-x86_64.jar", dependency.fileName());
+        assertEquals("io/netty/netty-transport-native-epoll/4.2.10.Final/"
+                + "netty-transport-native-epoll-4.2.10.Final-linux-x86_64.jar", dependency.mavenPath());
+        assertEquals("io.netty:netty-transport-native-epoll:4.2.10.Final:linux-x86_64",
+                dependency.coordinates());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Dependency("g", "a", "1", "../boese", SHA));
+    }
+
+    @Test
     void normalisesTheChecksum() {
         assertEquals(SHA, new Dependency("g", "a", "1", "  " + SHA.toUpperCase() + " ").sha256());
     }

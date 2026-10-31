@@ -11,13 +11,23 @@ import java.util.Map;
 /**
  * Skriptgesteuerte Ein-/Ausgabe für Wizard-Tests: Antworten werden nach einem
  * Teilstring der Frage zugeordnet und in Reihenfolge verbraucht.
+ *
+ * <p>Der erste Fragebogen-Lauf ist streng: Eine fehlende Antwort bricht den Test
+ * ab, damit ein Tippfehler im Skript nicht unbemerkt zu einem Vorschlagswert
+ * führt. Ab dem zweiten Lauf — etwa nach einem fehlgeschlagenen Verbindungstest —
+ * gelten bereits gegebene Antworten weiter; das Skript muss dann nur noch die
+ * Felder füllen, die sich ändern sollen.
  */
 final class ScriptedWizardIo implements WizardIo {
 
     private final Map<String, Deque<String>> answers = new LinkedHashMap<>();
     private final List<String> messages = new ArrayList<>();
     private final List<String> asked = new ArrayList<>();
+    private final List<String> notices = new ArrayList<>();
     private String failOn;
+    private boolean abortOnNotice;
+    private int rounds;
+    private boolean lenient;
 
     ScriptedWizardIo answer(String promptPart, String... values) {
         answers.put(promptPart, new ArrayDeque<>(List.of(values)));
@@ -29,12 +39,39 @@ final class ScriptedWizardIo implements WizardIo {
         return this;
     }
 
+    ScriptedWizardIo abortOnNotice() {
+        this.abortOnNotice = true;
+        return this;
+    }
+
     List<String> messages() {
         return messages;
     }
 
     List<String> asked() {
         return asked;
+    }
+
+    List<String> notices() {
+        return notices;
+    }
+
+    @Override
+    public Answers fill(Questionnaire form, Answers initial, QuestionnaireNotice notice) {
+        if (notice != null && notice.present()) {
+            notices.add(notice.message());
+            if (abortOnNotice) {
+                throw new WizardAbortedException("Testabbruch");
+            }
+        }
+        rounds++;
+        boolean previous = lenient;
+        lenient = rounds > 1;
+        try {
+            return WizardIo.super.fill(form, initial, notice);
+        } finally {
+            lenient = previous;
+        }
     }
 
     @Override
@@ -55,6 +92,9 @@ final class ScriptedWizardIo implements WizardIo {
             if (option.equalsIgnoreCase(value)) {
                 return option;
             }
+        }
+        if (lenient) {
+            return defaultValue;
         }
         throw new AssertionError("Ungültige Auswahl '" + value + "' für: " + prompt);
     }
@@ -82,11 +122,17 @@ final class ScriptedWizardIo implements WizardIo {
         for (Map.Entry<String, Deque<String>> entry : answers.entrySet()) {
             if (prompt.contains(entry.getKey())) {
                 String value = entry.getValue().poll();
-                if (value == null) {
-                    throw new AssertionError("Keine Antwort mehr für: " + prompt);
+                if (value != null) {
+                    return value;
                 }
-                return value;
+                if (lenient) {
+                    return "";
+                }
+                throw new AssertionError("Keine Antwort mehr für: " + prompt);
             }
+        }
+        if (lenient) {
+            return "";
         }
         throw new AssertionError("Unerwartete Frage: " + prompt + " — bekannt: " + answers.keySet());
     }

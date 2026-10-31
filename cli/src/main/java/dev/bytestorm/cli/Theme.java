@@ -45,6 +45,8 @@ public final class Theme {
     private static final String MAGENTA = "\u001B[35m";
     private static final String CYAN = "\u001B[36m";
     private static final String GRAY = "\u001B[90m";
+    private static final String BRIGHT_GREEN = "\u001B[92m";
+    private static final String INVERSE_GREEN = "\u001B[42m\u001B[30m";
 
     private static final String TICK = "✔";
     private static final String CROSS = "✖";
@@ -199,6 +201,27 @@ public final class Theme {
     /** @param text Text @return grau */
     public static String gray(String text) {
         return style(text, GRAY);
+    }
+
+    /**
+     * Hebt Rahmen, aktive Auswahl und bestätigte Antworten hervor: helles Grün.
+     *
+     * @param text Text
+     * @return grün hervorgehobener Text oder der Text unverändert
+     */
+    public static String accent(String text) {
+        return style(text, BRIGHT_GREEN);
+    }
+
+    /**
+     * Fokuszeile eines Formulars: grüner Hintergrund mit dunkler Schrift, damit die
+     * Auswahl auch ohne Farbwahrnehmung an der Position erkennbar bleibt.
+     *
+     * @param text Text
+     * @return invertierter Text oder der Text unverändert
+     */
+    public static String highlight(String text) {
+        return style(text, INVERSE_GREEN);
     }
 
     /**
