@@ -103,7 +103,7 @@ class CloudCommandTest {
                 "die globale Wildcard erlaubt alles");
 
         assertEquals(List.of("restart:" + LOBBY_ID,
-                "kick:" + PLAYER_ID + ":Removed by an administrator"), cloud.calls);
+                "kick:" + PLAYER_ID + ":You were removed from the network"), cloud.calls);
     }
 
     @Test
@@ -350,7 +350,7 @@ class CloudCommandTest {
         assertTrue(first(run("player kick Notch Bitte lesen")).contains("Notch"));
 
         assertEquals(List.of("connect:" + PLAYER_ID + ":Lobby-1",
-                "kick:" + PLAYER_ID + ":Removed by an administrator",
+                "kick:" + PLAYER_ID + ":You were removed from the network",
                 "kick:" + PLAYER_ID + ":Bitte lesen"), cloud.calls);
     }
 
@@ -456,9 +456,9 @@ class CloudCommandTest {
         return replies.stream().map(Reply::text).collect(Collectors.joining("\n"));
     }
 
-    /** @return der Text ohne {@code &}-Farbcodes, damit Zahlen prüfbar bleiben */
+    /** @return der Text ohne MiniMessage-Tags, damit Zahlen prüfbar bleiben */
     private static String plain(String text) {
-        return text.replaceAll("&[0-9a-fk-or]", "");
+        return text.replaceAll("<[^>]*>", "").replaceAll("&[0-9a-fk-or]", "");
     }
 
     /** Plugin-Zustand ohne Dateisystem. */

@@ -5,3 +5,5 @@ api-version: '1.21'
 authors: [ByteStorm]
 description: Verbindet einen Paper-Service mit der ByteStorm-Cloud.
 folia-supported: true
+# Nur für %bytestorm_...%: ohne PlaceholderAPI startet die Bridge unverändert.
+softdepend: [PlaceholderAPI]

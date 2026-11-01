@@ -158,7 +158,7 @@ public final class CloudCommand {
      * @return die Ablehnung samt der Node, die ein Admin vergeben müsste
      */
     private static Reply denied(String path, Messages messages) {
-        return Reply.of(messages.text("cloud.denied", Map.of(
+        return Reply.of(messages.text("command-cloud-sub-command-no-permission", Map.of(
                 "command", "/" + NAME + " " + path.replace('.', ' '),
                 "permission", CloudPermissions.node(path))));
     }
@@ -216,7 +216,7 @@ public final class CloudCommand {
         if (configured == null || configured.equalsIgnoreCase(used)) {
             return List.of(Reply.of(messages.text("cloud.language", Map.of("language", used))));
         }
-        return List.of(Reply.of(messages.text("cloud.language.fallback",
+        return List.of(Reply.of(messages.text("cloud.languageFallback",
                 Map.of("language", used, "configured", configured))));
     }
 
@@ -379,7 +379,7 @@ public final class CloudCommand {
             }
         }
         if (failed.isEmpty()) {
-            return List.of(Reply.of(messages.text("cloud.service.restartCrashed", Map.of(
+            return List.of(Reply.of(messages.text("cloud.service.restartCrashed.success", Map.of(
                     "count", String.valueOf(restarted.size()),
                     "names", String.join(", ", restarted)))));
         }
@@ -428,7 +428,8 @@ public final class CloudCommand {
         out.add(Reply.of(messages.text("cloud.service.logsHeader", Map.of(
                 "name", service.name(), "count", String.valueOf(tail.size())))));
         for (String line : tail) {
-            out.add(Reply.of(line));
+            // Rohzeile: < und & aus der Konsole sind Text, kein MiniMessage.
+            out.add(Reply.literal(line));
         }
         return out;
     }

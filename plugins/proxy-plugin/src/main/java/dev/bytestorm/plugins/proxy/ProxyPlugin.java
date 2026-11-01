@@ -51,8 +51,8 @@ import java.util.concurrent.TimeUnit;
  * Start entstehen {@code config.json} und {@code messages/} im Datenverzeichnis.
  *
  * <p>Die Datei bestimmt nur, <em>was</em> läuft ({@code tablist}, {@code maintenance},
- * {@code cloud}, Sprache). Alle Texte stehen in {@code messages/<sprache>.json}
- * und nutzen {@code &}-Farbcodes sowie Platzhalter wie {@code {players}}.
+ * {@code cloud}, Sprache). Alle Texte stehen in {@code messages/<sprache>.json},
+ * sind MiniMessage und nutzen Platzhalter wie {@code %players%}.
  * Änderungen an {@code config.json} werden im Sekundentakt übernommen; ist die
  * neue Datei fehlerhaft, bleiben die alten Einstellungen aktiv.
  *
@@ -72,7 +72,7 @@ public final class ProxyPlugin implements PluginControl {
     public static final String MESSAGES_DIRECTORY = "messages";
 
     /** Schlüssel der Wartungsnachricht beim Login. */
-    public static final String MAINTENANCE_MESSAGE = "maintenance.kick";
+    public static final String MAINTENANCE_MESSAGE = "server-join-cancel-because-maintenance";
 
     private static final String HEADER_KEY = "tablist.header";
     private static final String FOOTER_KEY = "tablist.footer";

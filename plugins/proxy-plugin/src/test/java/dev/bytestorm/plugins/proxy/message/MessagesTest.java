@@ -22,12 +22,13 @@ class MessagesTest {
     void readsTheShippedLanguagesAndReplacesPlaceholders() throws Exception {
         Messages english = Messages.load("en", temp);
         assertEquals("en", english.language());
-        assertEquals("&bByteStorm &7· &f3&7/&f20",
+        assertEquals("<aqua><bold>ByteStorm</bold></aqua> <dark_gray>·</dark_gray> "
+                        + "<white>3</white><dark_gray>/</dark_gray><white>20</white>",
                 english.text("tablist.header", Map.of("players", "3", "max", "20")));
 
         Messages german = Messages.load("de", temp);
         assertEquals("de", german.language());
-        assertTrue(german.text("maintenance.kick", Map.of()).contains("Wartung"));
+        assertTrue(german.text("server-join-cancel-because-maintenance", Map.of()).contains("Wartung"));
     }
 
     @Test
@@ -41,11 +42,15 @@ class MessagesTest {
     @Test
     void overridesInTheDataDirectoryWin() throws Exception {
         Path messages = Files.createDirectories(temp.resolve("messages"));
-        Files.writeString(messages.resolve("en.json"), "{ \"tablist.footer\": \"Nur hier: {players}\" }");
+        Files.writeString(messages.resolve("en.json"), """
+                { "messages": { "tablist": { "footer": "<gray>Nur hier: %players%</gray>" } } }
+                """);
 
         Messages loaded = Messages.load("en", messages);
 
-        assertEquals("Nur hier: 7", loaded.find("tablist.footer", Map.of("players", "7")).orElseThrow());
+        assertEquals("<gray>Nur hier: 7</gray>",
+                loaded.find("tablist.footer", Map.of("players", "7")).orElseThrow(),
+                "ein eigener Block gewinnt gegen das Jar");
         assertTrue(loaded.find("tablist.header").isPresent(),
                 "nicht überschriebene Schlüssel kommen weiter aus dem Plugin-Jar");
     }
@@ -53,7 +58,7 @@ class MessagesTest {
     @Test
     void aLanguageThatOnlyHasAnOverrideStillWorks() throws Exception {
         Path messages = Files.createDirectories(temp.resolve("messages"));
-        Files.writeString(messages.resolve("fr.json"), "{ \"tablist.footer\": \"Amusez-vous\" }");
+        Files.writeString(messages.resolve("fr.json"), "{ \"messages\": { \"tablist.footer\": \"Amusez-vous\" } }");
 
         Messages loaded = Messages.load("fr", messages);
 
@@ -79,9 +84,28 @@ class MessagesTest {
     }
 
     @Test
+    void nestedBlocksBecomeDottedKeys() throws Exception {
+        Messages messages = Messages.load("en", temp);
+
+        assertTrue(messages.find("cloud.status.header").isPresent(),
+                "cloud.status.header kommt aus dem verschachtelten Block");
+        assertTrue(messages.find("cloud.service.restartCrashed.none").isPresent(),
+                "auch drei Ebenen werden zu Punkt-Schlüsseln");
+    }
+
+    @Test
+    void multilineMessagesKeepTheirLineBreaks() throws Exception {
+        String kick = Messages.load("de", temp).text("server-join-cancel-because-maintenance", Map.of());
+
+        assertEquals(3, kick.split("\n").length, kick);
+        assertTrue(kick.contains("Wartungsmodus"), kick);
+    }
+
+    @Test
     void brokenFilesAreReportedWithTheirName() throws Exception {
         Path messages = Files.createDirectories(temp.resolve("messages"));
-        Files.writeString(messages.resolve("en.json"), "{ \"tablist.header\": 42 }");
+        Files.writeString(messages.resolve("en.json"),
+                "{ \"messages\": { \"tablist\": { \"header\": 42 } } }");
 
         IOException error = assertThrows(IOException.class, () -> Messages.load("en", messages));
 
@@ -90,7 +114,7 @@ class MessagesTest {
 
     @Test
     void unknownPlaceholdersStayUntouched() {
-        assertEquals("Hallo {unbekannt}, 3 Spieler",
-                Messages.replace("Hallo {unbekannt}, {players} Spieler", Map.of("players", "3")));
+        assertEquals("Hallo %unbekannt%, 3 Spieler",
+                Messages.replace("Hallo %unbekannt%, %players% Spieler", Map.of("players", "3")));
     }
 }

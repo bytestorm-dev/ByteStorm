@@ -4,6 +4,7 @@ import dev.bytestorm.bridge.common.BridgeConfigurationException;
 import dev.bytestorm.bridge.common.BridgeException;
 import dev.bytestorm.bridge.common.BridgePlatform;
 import dev.bytestorm.bridge.common.BridgeSettings;
+import dev.bytestorm.bridge.common.BridgeText;
 import dev.bytestorm.bridge.common.CloudBridge;
 import dev.bytestorm.bridge.common.FallbackSelector;
 import dev.bytestorm.proto.PlayerInfo;
@@ -149,7 +150,7 @@ public final class BungeeBridgePlugin extends Plugin implements BridgePlatform, 
             getLogger().log(Level.WARNING, "Spieler {0} ist nicht verbunden", player);
             return;
         }
-        String message = reason.isBlank() ? "Vom Netz entfernt" : reason;
+        String message = reason.isBlank() ? BridgeText.DEFAULT_KICK_REASON : reason;
         proxy.getScheduler().schedule(this, () -> {
             connected.disconnect(message);
             getLogger().log(Level.INFO, "Spieler {0} getrennt", player);

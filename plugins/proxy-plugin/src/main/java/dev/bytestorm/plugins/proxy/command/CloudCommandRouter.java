@@ -102,9 +102,14 @@ public final class CloudCommandRouter implements SimpleCommand {
                 if (reply == null || reply.text().isEmpty()) {
                     continue;
                 }
-                source.sendMessage(reply.clickable()
-                        ? Components.of(reply.text(), reply.command())
-                        : Components.of(reply.text()));
+                // Konsolenzeilen sind kein MiniMessage — sie gehen roh raus.
+                if (reply.literal()) {
+                    source.sendMessage(Components.literal(reply.text()));
+                } else {
+                    source.sendMessage(reply.clickable()
+                            ? Components.of(reply.text(), reply.command())
+                            : Components.of(reply.text()));
+                }
             }
         });
     }

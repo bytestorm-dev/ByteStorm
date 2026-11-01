@@ -28,6 +28,8 @@ subprojects {
         mavenCentral()
         // Plattform-APIs für die Bridge-Plugins
         maven("https://repo.papermc.io/repository/maven-public/")
+        // PlaceholderAPI für die Platzhalter-Erweiterung
+        maven("https://repo.extendedclip.com/releases")
     }
 
     configure<JavaPluginExtension> {

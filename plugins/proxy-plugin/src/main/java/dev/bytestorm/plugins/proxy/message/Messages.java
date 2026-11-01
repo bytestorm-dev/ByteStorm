@@ -23,9 +23,23 @@ import java.util.TreeSet;
  * Sprachdateien des Proxy-Plugins (§16).
  *
  * <p>Aufbau: {@code messages/<sprache>.json} im Plugin-Jar, dazu Überschreibungen
- * unter {@code messages/} im Datenverzeichnis des Plugins. Die Schlüssel sind
- * flach ({@code tablist.header}, {@code maintenance.kick}), Platzhalter stehen in
- * geschweiften Klammern ({@code {players}}).
+ * unter {@code messages/} im Datenverzeichnis des Plugins. Die Texte stehen in
+ * einem {@code messages}-Objekt und dürfen beliebig tief verschachtelt sein:
+ *
+ * <pre>{@code
+ * {
+ *   "messages": {
+ *     "tablist":  { "header": "<aqua>%players% Spieler</aqua>" },
+ *     "server-join-cancel-because-maintenance": "<red>Wartung</red>\n<gray>Gleich zurück</gray>"
+ *   }
+ * }
+ * }</pre>
+ *
+ * <p>Verschachtelte Objekte werden zu Punkt-Schlüsseln
+ * ({@code tablist.header}, {@code cloud.status.row}); flache Schlüssel mit Punkt
+ * im Namen bleiben ebenfalls gültig. Die Texte sind MiniMessage und dürfen
+ * Zeilenumbrüche enthalten — {@code \n} in JSON, oder echte Zeilen in der Datei.
+ * Platzhalter stehen in Prozentzeichen ({@code %players%}).
  *
  * <p>Fehlt ein Schlüssel, liefert {@link #text(String, Map)} den Schlüssel selbst
  * zurück: ein sichtbarer Fehler statt einer leeren Zeile. Fehlt eine ganze
@@ -35,6 +49,9 @@ public final class Messages {
 
     /** Ressourcenordner der mitgelieferten Sprachen. */
     public static final String RESOURCE_DIRECTORY = "messages";
+
+    /** Objekt, das die Texte einer Datei bündelt; fehlt es, gilt das Wurzelobjekt. */
+    public static final String MESSAGES_NODE = "messages";
 
     private static final String SUFFIX = ".json";
 
@@ -129,7 +146,7 @@ public final class Messages {
     }
 
     /**
-     * Ersetzt {@code {name}}-Platzhalter. Unbekannte Platzhalter bleiben stehen,
+     * Ersetzt {@code %name%}-Platzhalter. Unbekannte Platzhalter bleiben stehen,
      * damit ein fehlender Wert in der Anzeige auffällt statt zu verschwinden.
      *
      * @param template Vorlage aus der Sprachdatei
@@ -148,7 +165,7 @@ public final class Messages {
             if (entry.getKey() == null || entry.getValue() == null) {
                 continue;
             }
-            result = result.replace("{" + entry.getKey() + "}", entry.getValue());
+            result = result.replace("%" + entry.getKey() + "%", entry.getValue());
         }
         return result;
     }
@@ -178,15 +195,42 @@ public final class Messages {
         if (root == null || !root.isObject()) {
             throw new IOException(source + " muss ein JSON-Objekt sein");
         }
+        JsonNode messages = root.get(MESSAGES_NODE);
+        if (messages != null) {
+            if (!messages.isObject()) {
+                throw new IOException(source + ": '" + MESSAGES_NODE + "' muss ein JSON-Objekt sein");
+            }
+            root = messages;
+        }
         Map<String, String> entries = new LinkedHashMap<>();
-        Iterator<Map.Entry<String, JsonNode>> fields = root.properties().iterator();
+        collect(root, "", entries, source);
+        return entries;
+    }
+
+    /**
+     * Flacht verschachtelte Objekte zu Punkt-Schlüsseln ab.
+     *
+     * @param node   aktuelles JSON-Objekt
+     * @param prefix Pfad bis hierher, leer im Wurzelobjekt
+     * @param target gesammelte Texte
+     * @param source Dateiname für Fehlermeldungen
+     * @throws IOException wenn ein Wert kein Text ist
+     */
+    private static void collect(JsonNode node, String prefix, Map<String, String> target,
+                                String source) throws IOException {
+        Iterator<Map.Entry<String, JsonNode>> fields = node.properties().iterator();
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> field = fields.next();
-            if (!field.getValue().isTextual()) {
-                throw new IOException(source + ": Wert von '" + field.getKey() + "' muss Text sein");
+            String key = prefix.isEmpty() ? field.getKey() : prefix + "." + field.getKey();
+            JsonNode value = field.getValue();
+            if (value.isObject()) {
+                collect(value, key, target, source);
+                continue;
             }
-            entries.put(field.getKey(), field.getValue().asText());
+            if (!value.isTextual()) {
+                throw new IOException(source + ": Wert von '" + key + "' muss Text sein");
+            }
+            target.put(key, value.asText());
         }
-        return entries;
     }
 }

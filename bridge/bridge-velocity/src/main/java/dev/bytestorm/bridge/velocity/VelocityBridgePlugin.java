@@ -17,6 +17,7 @@ import dev.bytestorm.bridge.common.BridgeConfigurationException;
 import dev.bytestorm.bridge.common.BridgeException;
 import dev.bytestorm.bridge.common.BridgePlatform;
 import dev.bytestorm.bridge.common.BridgeSettings;
+import dev.bytestorm.bridge.common.BridgeText;
 import dev.bytestorm.bridge.common.CloudBridge;
 import dev.bytestorm.bridge.common.FallbackSelector;
 import dev.bytestorm.proto.PlayerInfo;
@@ -158,7 +159,7 @@ public final class VelocityBridgePlugin implements BridgePlatform {
     public void kickPlayer(String player, String reason) {
         server.getPlayer(player).ifPresentOrElse(connected -> {
             connected.disconnect(Component.text(reason.isBlank()
-                    ? "Vom Netz entfernt" : reason));
+                    ? BridgeText.DEFAULT_KICK_REASON : reason));
             logger.info("Spieler '{}' getrennt", player);
         }, () -> logger.warn("Spieler '{}' ist nicht verbunden", player));
     }

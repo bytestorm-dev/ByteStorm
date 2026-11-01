@@ -1,64 +1,86 @@
 {
-  "tablist.header": "&bByteStorm &7· &f{players}&7/&f{max}",
-  "tablist.footer": "&7Viel Spaß im Netzwerk",
-  "maintenance.kick": "&c&lWartung\n&7Wir sind gleich zurück.",
-
-  "cloud.usage": "&b&lCloud &7— Kommandos\n&f/cloud status &7· &f/cloud service list|info|logs|start|stop|restart|restart-crashed|kill|reapply|online|exec\n&f/cloud group list|info|scale &7· &f/cloud maintenance <gruppe> on|off\n&f/cloud player list|connect|kick\n&f/cloud tablist [on|off] &7· &f/cloud language\n&7Jedes Kommando hat eine eigene Node: &fbytestorm.command.<kommando> &7· alles: &fbytestorm.command.*\n&7Aliasse: &f/c &7· &f/bs &7· &f/bytestorm",
-  "cloud.disabled": "&e/cloud ist aus — cloud.enabled und cloud.apiKey in der config.json setzen",
-  "cloud.notRunning": "&cByteStormProxy läuft nicht — siehe Proxy-Log",
-  "cloud.denied": "&cDu darfst &f{command} &cnicht benutzen &7(braucht &f{permission}&7)",
-  "cloud.error": "&cDie Cloud meldet einen Fehler: &f{reason}",
-  "cloud.unknown": "&cUnbekanntes Kommando: &f{command} &7(/cloud help)",
-  "cloud.onlyCli": "&e/cloud {command} gibt es nur in der interaktiven Konsole",
-  "cloud.usageHint": "&eBenutzung: &f{usage}",
-
-  "cloud.unknownService": "&cUnbekannter Service: &f{name}",
-  "cloud.unknownGroup": "&cUnbekannte Gruppe: &f{group}",
-  "cloud.unknownPlayer": "&cUnbekannter Spieler: &f{name}",
-
-  "cloud.status.header": "&bByteStorm &7· &f{online}&7/&f{total} &7online · &f{groups} &7Gruppen · &f{maintenance} &7in Wartung",
-  "cloud.status.empty": "&7Keine Services registriert.",
-  "cloud.status.row": "&f{name} &7· &f{state} &7· {group} &7· {players} &7· {port} &7· Crash-Budget &f{budget}",
-  "cloud.status.crashHeader": "&bLetzte Abstürze",
-  "cloud.status.crashRow": "&f{service} &7· {group} &7· &f{time} &7· Exit &f{code} &7· &f{reason}",
-  "cloud.status.restartAll": "&8» &7Alle abgestürzten Services neu starten &7(&f{count}&7)",
-
-  "cloud.list.header": "&bServices &7({count})",
-  "cloud.service.info": "&b{name}\n&7ID: &f{id}\n&7Gruppe: &f{group}\n&7Status: &f{state}\n&7Port: &f{port}\n&7Spieler: &f{players}\n&7Runtime: &f{runtime}",
-  "cloud.service.crash": "&7Letzter Absturz: &f{reason} &7· Exit &f{code} &7· &f{time}",
-  "cloud.service.logsHeader": "&bLogs von &f{name} &7(letzte {count})",
-  "cloud.service.logsEmpty": "&7Keine Logzeilen für &f{name}",
-  "cloud.service.started": "&aGestartet: &f{name} &7in &f{group} &7· &f{state}",
-  "cloud.service.stopped": "&aGestoppt: &f{name}",
-  "cloud.service.restarted": "&aNeu gestartet: &f{name}",
-  "cloud.service.killed": "&aGekillt: &f{name}",
-  "cloud.service.exec": "&aAn &f{name} &agesendet: &f{command}",
-  "cloud.service.reapplied": "&aTemplates von &f{name} &aerneut angewendet",
-  "cloud.service.online": "&aService &f{name} &aist jetzt ONLINE",
-  "cloud.service.restartCrashed": "&aNeu gestartet: &f{names} &7({count})",
-  "cloud.service.restartCrashed.partial": "&eNeu gestartet: &f{restarted} &e· fehlgeschlagen: &f{failed}",
-  "cloud.service.restartCrashed.none": "&7Keine abgestürzten Services.",
-
-  "cloud.group.header": "&bGruppen &7({count})",
-  "cloud.group.empty": "&7Keine Gruppen angelegt.",
-  "cloud.group.row": "&f{name} &7· &f{type} &7· {state} &7· {services}&7/&f{max} &7Services",
-  "cloud.group.info": "&b{name}\n&7Typ: &f{type}\n&7Modus: &f{mode}\n&7Status: &f{state}\n&7Services: &f{services}&7/&f{max}\n&7Max. Spieler: &f{players}",
-
-  "cloud.maintenance.set": "&aWartung von &f{group}&a: &f{state}",
-  "cloud.state.on": "an",
-  "cloud.state.off": "aus",
-  "cloud.group.scaled": "&aGruppe &f{group} &aauf &f{target} &aServices skaliert",
-
-  "cloud.player.header": "&bSpieler &7({count})",
-  "cloud.player.empty": "&7Keine Spieler online.",
-  "cloud.player.row": "&f{name} &7· {proxy} &7· {server}",
-  "cloud.player.connected": "&a&f{player} &aauf &f{service} &ageschickt",
-  "cloud.player.kicked": "&a&f{player} &agetrennt",
-  "cloud.player.defaultReason": "Vom Netz entfernt",
-
-  "cloud.tablist.state": "&bTablist &7· &f{state}",
-  "cloud.tablist.set": "&aTablist: &f{state}",
-  "cloud.tablist.failed": "&cTablist konnte nicht gespeichert werden: &f{reason}",
-  "cloud.language": "&bSprache &7· &f{language}",
-  "cloud.language.fallback": "&bSprache &7· &f{language} &7(eingestellt &f{configured}&7, Sprachdatei fehlt)"
+  "messages": {
+    "already-connected": "<red>Du bist bereits mit diesem Netzwerk verbunden.</red>",
+    "command-hub-no-server-found": "<gray>Gerade ist kein Hub erreichbar. Versuch es gleich noch einmal.</gray>",
+    "command-hub-success-connect": "<gray>Du wirst mit <white>%server%</white> verbunden …</gray>",
+    "command-hub-already-in-hub": "<red>Du bist schon auf dem Hub.</red>",
+    "server-join-cancel-because-permission": "<red><bold>Kein Zutritt</bold></red>\n<gray>Du darfst diesem Server nicht beitreten.</gray>",
+    "server-join-cancel-because-maintenance": "<red><bold>Wartung</bold></red>\n<gray>Dieser Server ist gerade im Wartungsmodus.</gray>\n<dark_gray>Gleich geht es weiter.</dark_gray>",
+    "server-join-cancel-because-only-proxy": "<gray>Bitte verbinde dich über den Netzwerk-Proxy.</gray>",
+    "command-cloud-sub-command-no-permission": "<gray>Du darfst <aqua>%command%</aqua> nicht benutzen.</gray> <dark_gray>(%permission%)</dark_gray>",
+    "tablist": {
+      "header": "<aqua><bold>ByteStorm</bold></aqua> <dark_gray>·</dark_gray> <white>%players%</white><dark_gray>/</dark_gray><white>%max%</white>",
+      "footer": "<gray>Viel Spaß auf dem Netzwerk</gray>"
+    },
+    "cloud": {
+      "usage": "<aqua><bold>ByteStorm Cloud</bold></aqua> <dark_gray>·</dark_gray> <gray>Hilfe</gray>\n<dark_gray>Überblick</dark_gray> <white>/cloud status</white>\n<dark_gray>Services</dark_gray> <white>/cloud service list|info|logs|start|stop|restart|restart-crashed|kill|reapply|online|exec</white>\n<dark_gray>Gruppen</dark_gray> <white>/cloud group list|info|scale</white> <dark_gray>·</dark_gray> <white>/cloud maintenance <gruppe> on|off</white>\n<dark_gray>Spieler</dark_gray> <white>/cloud player list|connect|kick</white>\n<dark_gray>Proxy</dark_gray> <white>/cloud tablist [on|off]</white> <dark_gray>·</dark_gray> <white>/cloud language</white>\n<dark_gray>Jedes Unterkommando hat eine eigene Node unter bytestorm.command — Wildcards wie bytestorm.command.service.* decken eine ganze Familie ab.</dark_gray>\n<dark_gray>Erreichbar auch als</dark_gray> <white>/c</white> <dark_gray>·</dark_gray> <white>/bs</white> <dark_gray>·</dark_gray> <white>/bytestorm</white>",
+      "disabled": "<yellow>/cloud ist aus</yellow> <dark_gray>·</dark_gray> <gray>cloud.enabled auf true setzen und cloud.apiKey in der config.json eintragen</gray>",
+      "notRunning": "<red>ByteStormProxy läuft nicht</red> <dark_gray>·</dark_gray> <gray>das Proxy-Log sagt warum</gray>",
+      "error": "<red>Die Cloud meldet einen Fehler</red> <dark_gray>·</dark_gray> <white>%reason%</white>",
+      "unknown": "<red>Unbekanntes Kommando</red> <white>%command%</white> <dark_gray>·</dark_gray> <gray>siehe /cloud help</gray>",
+      "onlyCli": "<yellow>/cloud %command% gibt es nur in der interaktiven Konsole.</yellow>",
+      "usageHint": "<yellow>Benutzung</yellow> <white>%usage%</white>",
+      "unknownService": "<red>Kein Service namens</red> <white>%name%</white>",
+      "unknownGroup": "<red>Keine Gruppe namens</red> <white>%group%</white>",
+      "unknownPlayer": "<red>Kein Spieler namens</red> <white>%name%</white>",
+      "state": {
+        "on": "<green>an</green>",
+        "off": "<gray>aus</gray>"
+      },
+      "status": {
+        "header": "<aqua><bold>ByteStorm</bold></aqua> <dark_gray>·</dark_gray> <white>%online%/%total%</white> <gray>Services online</gray> <dark_gray>·</dark_gray> <white>%groups%</white> <gray>Gruppen</gray> <dark_gray>·</dark_gray> <white>%maintenance%</white> <gray>in Wartung</gray>",
+        "empty": "<gray>Es laufen noch keine Services.</gray>",
+        "row": "<white>%name%</white> <dark_gray>·</dark_gray> <yellow>%state%</yellow> <dark_gray>·</dark_gray> <gray>%group%</gray> <dark_gray>·</dark_gray> <gray>%players% Spieler</gray> <dark_gray>·</dark_gray> <gray>Port %port%</gray> <dark_gray>·</dark_gray> <gray>%budget% Abstürze</gray>",
+        "crashHeader": "<aqua><bold>Letzte Abstürze</bold></aqua>",
+        "crashRow": "<white>%service%</white> <dark_gray>·</dark_gray> <gray>%group% · %time%</gray> <dark_gray>·</dark_gray> <gray>Exit</gray> <white>%code%</white> <dark_gray>·</dark_gray> <red>%reason%</red>",
+        "restartAll": "<dark_gray>»</dark_gray> <gray>Alle abgestürzten Services neu starten</gray> <white>(%count%)</white>"
+      },
+      "list": {
+        "header": "<aqua><bold>Services</bold></aqua> <dark_gray>(%count%)</dark_gray>"
+      },
+      "service": {
+        "info": "<aqua><bold>%name%</bold></aqua>\n<dark_gray>ID</dark_gray> <white>%id%</white>\n<dark_gray>Gruppe</dark_gray> <white>%group%</white>\n<dark_gray>Status</dark_gray> <white>%state%</white>\n<dark_gray>Adresse</dark_gray> <white>%port%</white>\n<dark_gray>Spieler</dark_gray> <white>%players%</white>\n<dark_gray>Runtime</dark_gray> <white>%runtime%</white>",
+        "crash": "<red>Letzter Absturz</red> <dark_gray>·</dark_gray> <gray>%reason% · Exit %code% · %time%</gray>",
+        "logsHeader": "<aqua><bold>Logs</bold></aqua> <white>%name%</white> <dark_gray>(letzte %count% Zeilen)</dark_gray>",
+        "logsEmpty": "<gray>Für %name% gibt es noch keine Logzeilen.</gray>",
+        "started": "<green>Gestartet</green> <white>%name%</white> <gray>in %group% · %state%</gray>",
+        "stopped": "<green>Gestoppt</green> <white>%name%</white>",
+        "restarted": "<green>Neu gestartet</green> <white>%name%</white>",
+        "killed": "<green>Gekillt</green> <white>%name%</white>",
+        "exec": "<green>An %name% gesendet</green> <white>%command%</white>",
+        "reapplied": "<green>Templates von %name% erneut angewendet.</green>",
+        "online": "<green>%name% ist jetzt ONLINE.</green>",
+        "restartCrashed": {
+          "success": "<green>%count% abgestürzte Services neu gestartet</green> <dark_gray>·</dark_gray> <white>%names%</white>",
+          "partial": "<yellow>Neu gestartet</yellow> <white>%restarted%</white> <dark_gray>·</dark_gray> <red>fehlgeschlagen</red> <white>%failed%</white>",
+          "none": "<gray>Keine abgestürzten Services.</gray>"
+        }
+      },
+      "group": {
+        "header": "<aqua><bold>Gruppen</bold></aqua> <dark_gray>(%count%)</dark_gray>",
+        "empty": "<gray>Es sind noch keine Gruppen angelegt.</gray>",
+        "row": "<white>%name%</white> <dark_gray>·</dark_gray> <gray>%type% · %services%/%max% Services · Wartung</gray> <white>%state%</white>",
+        "info": "<aqua><bold>%name%</bold></aqua>\n<dark_gray>Typ</dark_gray> <white>%type%</white>\n<dark_gray>Modus</dark_gray> <white>%mode%</white>\n<dark_gray>Wartung</dark_gray> <white>%state%</white>\n<dark_gray>Services</dark_gray> <white>%services%/%max%</white>\n<dark_gray>Max. Spieler</dark_gray> <white>%players%</white>",
+        "scaled": "<green>%group% wird auf %target% Services skaliert.</green>"
+      },
+      "maintenance": {
+        "set": "<green>Wartung von %group% steht jetzt auf</green> <white>%state%</white>"
+      },
+      "player": {
+        "header": "<aqua><bold>Spieler</bold></aqua> <dark_gray>(%count%)</dark_gray>",
+        "empty": "<gray>Es sind keine Spieler online.</gray>",
+        "row": "<white>%name%</white> <dark_gray>·</dark_gray> <gray>%proxy% · %server%</gray>",
+        "connected": "<green>%player% auf %service% geschickt.</green>",
+        "kicked": "<green>%player% getrennt.</green>",
+        "defaultReason": "Du wurdest vom Netzwerk entfernt"
+      },
+      "tablist": {
+        "state": "<aqua><bold>Tablist</bold></aqua> <white>%state%</white>",
+        "set": "<green>Tablist steht jetzt auf</green> <white>%state%</white>",
+        "failed": "<red>Tablist konnte nicht gespeichert werden</red> <dark_gray>·</dark_gray> <white>%reason%</white>"
+      },
+      "language": "<aqua><bold>Sprache</bold></aqua> <white>%language%</white>",
+      "languageFallback": "<aqua><bold>Sprache</bold></aqua> <white>%language%</white> <gray>(eingestellt %configured%, aber die Datei fehlt)</gray>"
+    }
+  }
 }

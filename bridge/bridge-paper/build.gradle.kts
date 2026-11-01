@@ -14,6 +14,8 @@ tasks.processResources {
 
 dependencies {
     compileOnly(libs.paper.api)
+    // Optional: nur die Platzhalter-Erweiterung braucht sie, der Rest läuft ohne.
+    compileOnly(libs.placeholder.api)
     implementation(project(":bridge:bridge-common"))
 }
 
