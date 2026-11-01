@@ -13,10 +13,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -174,6 +177,71 @@ class DoctorTest {
     }
 
     @Test
+    void fixReappliesTemplatesToAStoppedProxyAndChecksAgain() throws IOException {
+        CloudLayout layout = new CloudLayout(root);
+        layout.create();
+        Path proxy = layout.staticServices().resolve("Proxy-1");
+        Files.createDirectories(proxy);
+        Files.writeString(proxy.resolve(ForwardingCheck.VELOCITY_CONFIG), """
+                player-info-forwarding-mode = "NONE"
+                forwarding-secret-file = "forwarding.secret"
+                """);
+        Files.writeString(proxy.resolve("forwarding.secret"), "fremd\n");
+        List<String> repaired = new ArrayList<>();
+
+        Doctor doctor = new Doctor(layout,
+                () -> CloudConfig.defaults().withForwardingSecret("richtig"),
+                () -> List.of(),
+                () -> List.of(service("Proxy-1", ServiceType.PROXY, ServiceState.STOPPED, 25565)),
+                () -> "ok", () -> "ok",
+                service -> {
+                    repaired.add(service);
+                    try {
+                        Files.writeString(proxy.resolve(ForwardingCheck.VELOCITY_CONFIG), """
+                                player-info-forwarding-mode = "modern"
+                                forwarding-secret-file = "forwarding.secret"
+                                """);
+                        Files.writeString(proxy.resolve("forwarding.secret"), "richtig\n");
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+
+        List<Diagnostics.Finding> findings = doctor.fix();
+
+        assertEquals(List.of("Proxy-1"), repaired);
+        assertTrue(has(findings, "Reparatur", "Proxy-1: Templates erneut angewendet"),
+                findings.toString());
+        assertFalse(has(findings, "Forwarding", "player-info-forwarding-mode"),
+                "nach dem erneuten Anwenden passt die Datei: " + findings);
+    }
+
+    @Test
+    void fixLeavesARunningProxyAloneAndNamesTheRestart() throws IOException {
+        CloudLayout layout = new CloudLayout(root);
+        layout.create();
+        Path proxy = layout.staticServices().resolve("Proxy-1");
+        Files.createDirectories(proxy);
+        Files.writeString(proxy.resolve(ForwardingCheck.VELOCITY_CONFIG), """
+                player-info-forwarding-mode = "NONE"
+                forwarding-secret-file = "forwarding.secret"
+                """);
+        Files.writeString(proxy.resolve("forwarding.secret"), "fremd\n");
+        List<String> repaired = new ArrayList<>();
+
+        Doctor doctor = new Doctor(layout,
+                () -> CloudConfig.defaults().withForwardingSecret("richtig"),
+                () -> List.of(),
+                () -> List.of(service("Proxy-1", ServiceType.PROXY, 25565)),
+                () -> "ok", () -> "ok", repaired::add);
+
+        List<Diagnostics.Finding> findings = doctor.fix();
+
+        assertEquals(List.of(), repaired, "ein laufender Service wird nicht angefasst");
+        assertTrue(has(findings, "Reparatur", "'service restart Proxy-1'"), findings.toString());
+    }
+
+    @Test
     void aMissingProxyGroupIsAnError() {
         CloudLayout layout = new CloudLayout(root);
         Doctor doctor = new Doctor(layout, CloudConfig::defaults,
@@ -254,6 +322,10 @@ class DoctorTest {
 
     private static ServiceInfo service(String name, ServiceType type, int port) {
         return service(name, type == ServiceType.PROXY ? "Proxy" : "Lobby", type, port);
+    }
+
+    private static ServiceInfo service(String name, ServiceType type, ServiceState state, int port) {
+        return service(name, type, port).toBuilder().setState(state).build();
     }
 
     private static ServiceInfo service(String name, String group, ServiceType type, int port) {

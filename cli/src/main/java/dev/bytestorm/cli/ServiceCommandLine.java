@@ -81,7 +81,7 @@ public final class ServiceCommandLine {
               platform list|tasks|info|versions|install|update  Plattformen (platform help)
               updater versions|check|update    Cloud aktualisieren (updater help)
               reload [config|groups]           Konfiguration und Gruppen-Cache neu laden
-              doctor                       Pfade, Ports, Java, Mongo/Redis und Forwarding prüfen
+              doctor [--fix]               Pfade, Ports, Java, Mongo/Redis und Forwarding prüfen
               info                         Agent-Status und Ressourcen
               clear                        Terminal leeren
               shutdown                     Cloud geordnet beenden (Alias stop)
@@ -240,7 +240,7 @@ public final class ServiceCommandLine {
             return status();
         }
         if (tokens[0].equalsIgnoreCase("doctor")) {
-            return doctor();
+            return doctor(tokens.length > 1 && tokens[1].equalsIgnoreCase("--fix"));
         }
         if (tokens[0].equalsIgnoreCase("group") || tokens[0].equalsIgnoreCase("maintenance")) {
             if (groups == null) {
@@ -478,14 +478,15 @@ public final class ServiceCommandLine {
     /**
      * Führt die Prüfungen aus und zeichnet das Ergebnis.
      *
+     * @param fix {@code true} für {@code --fix}: Templates abweichender Services erneut anwenden
      * @return Ausgabe für das Terminal
      */
-    private String doctor() {
+    private String doctor(boolean fix) {
         if (diagnostics == null) {
             return Theme.warn("Diagnose ist nicht verfügbar.");
         }
         try {
-            return DoctorReport.render(diagnostics.run());
+            return DoctorReport.render(fix ? diagnostics.fix() : diagnostics.run());
         } catch (RuntimeException e) {
             return Theme.fail("Fehler: " + messageOf(e));
         }

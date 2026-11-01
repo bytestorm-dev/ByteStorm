@@ -58,12 +58,28 @@ public final class Doctor implements Diagnostics {
         String check() throws RuntimeException;
     }
 
+    /**
+     * Wendet die Templates eines Services erneut an ({@code doctor --fix}).
+     * Die Prüfungen kennen nur Service-Namen; die Controller-Fassade arbeitet
+     * mit IDs.
+     */
+    @FunctionalInterface
+    public interface Repair {
+
+        /**
+         * @param service Service-Name
+         * @throws RuntimeException wenn das erneute Anwenden fehlschlägt
+         */
+        void reapply(String service);
+    }
+
     private final CloudLayout layout;
     private final Supplier<CloudConfig> config;
     private final Supplier<List<ServiceGroup>> groups;
     private final Supplier<List<ServiceInfo>> services;
     private final Probe mongo;
     private final Probe redis;
+    private final Repair repair;
 
     /**
      * @param layout   Verzeichnislayout der Cloud
@@ -76,12 +92,28 @@ public final class Doctor implements Diagnostics {
     public Doctor(CloudLayout layout, Supplier<CloudConfig> config,
                   Supplier<List<ServiceGroup>> groups, Supplier<List<ServiceInfo>> services,
                   Probe mongo, Probe redis) {
+        this(layout, config, groups, services, mongo, redis, null);
+    }
+
+    /**
+     * @param layout   Verzeichnislayout der Cloud
+     * @param config   aktive Konfiguration
+     * @param groups   Gruppen-Definitionen mit Plattform und Typ
+     * @param services registrierte Services
+     * @param mongo    Mongo-Prüfung
+     * @param redis    Redis-Prüfung
+     * @param repair   Reparatur für {@code --fix}, {@code null} wenn nicht verfügbar
+     */
+    public Doctor(CloudLayout layout, Supplier<CloudConfig> config,
+                  Supplier<List<ServiceGroup>> groups, Supplier<List<ServiceInfo>> services,
+                  Probe mongo, Probe redis, Repair repair) {
         this.layout = Objects.requireNonNull(layout, "layout");
         this.config = Objects.requireNonNull(config, "config");
         this.groups = Objects.requireNonNull(groups, "groups");
         this.services = Objects.requireNonNull(services, "services");
         this.mongo = Objects.requireNonNull(mongo, "mongo");
         this.redis = Objects.requireNonNull(redis, "redis");
+        this.repair = repair;
     }
 
     @Override
@@ -102,6 +134,49 @@ public final class Doctor implements Diagnostics {
         addresses(findings, known);
         groups(findings, definitions);
         forwarding(findings, known, definitions, current.proxy().forwardingSecret());
+        return List.copyOf(findings);
+    }
+
+    /**
+     * Wendet die Templates auf die Services an, deren Forwarding-Dateien nicht
+     * zur Konfiguration passen, und prüft anschließend erneut (§14, §17).
+     *
+     * <p>Ein laufender Service wird nicht angefasst: Er liest seine Konfiguration
+     * nur beim Start, deshalb nennt die Ausgabe für ihn den Neustart.
+     */
+    @Override
+    public List<Finding> fix() {
+        List<Finding> findings = new ArrayList<>();
+        if (repair != null) {
+            Map<String, ServiceGroup> definitions = new HashMap<>();
+            for (ServiceGroup group : groups.get()) {
+                definitions.put(group.getName(), group);
+            }
+            Map<String, ServiceInfo> broken = brokenForwarding(definitions);
+            if (broken.isEmpty()) {
+                findings.add(new Finding(Severity.OK, "Reparatur",
+                        "keine Forwarding-Abweichung zu beheben"));
+            }
+            for (Map.Entry<String, ServiceInfo> entry : broken.entrySet()) {
+                String name = entry.getKey();
+                ServiceState state = entry.getValue().getState();
+                if (state != ServiceState.STOPPED && state != ServiceState.CRASHED) {
+                    findings.add(new Finding(Severity.WARNING, "Reparatur",
+                            name + " läuft (" + state + ") — 'service restart " + name
+                                    + "' wendet die Templates beim Neustart an"));
+                    continue;
+                }
+                try {
+                    repair.reapply(name);
+                    findings.add(new Finding(Severity.OK, "Reparatur",
+                            name + ": Templates erneut angewendet"));
+                } catch (RuntimeException e) {
+                    findings.add(new Finding(Severity.WARNING, "Reparatur",
+                            name + ": " + messageOf(e)));
+                }
+            }
+        }
+        findings.addAll(run());
         return List.copyOf(findings);
     }
 
@@ -293,9 +368,7 @@ public final class Doctor implements Diagnostics {
         boolean hasProxyGroup = false;
         for (ServiceInfo info : known) {
             ServiceGroup group = definitions.get(info.getGroup());
-            boolean proxy = group == null
-                    ? info.getType() == ServiceType.PROXY
-                    : group.getType() == ServiceType.PROXY;
+            boolean proxy = isProxyService(info, group);
             // Auch eine falsch typisierte Velocity-Gruppe ist als Proxy gemeint: Der
             // Hinweis auf einen fehlenden Proxy wäre hier nur ein Folgefehler.
             if (proxy || (group != null && Platforms.isProxy(group.getPlatform()))) {
@@ -372,6 +445,48 @@ public final class Doctor implements Diagnostics {
             return " — 'service restart " + service + "' wendet die Templates an";
         }
         return " — 'service reapply " + service + "' überschreibt die Dateien aus den Templates";
+    }
+
+    /**
+     * @return Services, deren Forwarding-Dateien nicht zur Konfiguration passen
+     */
+    private Map<String, ServiceInfo> brokenForwarding(Map<String, ServiceGroup> definitions) {
+        Map<String, Path> proxies = new LinkedHashMap<>();
+        Map<String, Path> backends = new LinkedHashMap<>();
+        Map<String, ServiceInfo> known = new HashMap<>();
+        for (ServiceInfo info : services.get()) {
+            ServiceGroup group = definitions.get(info.getGroup());
+            if (group != null && Platforms.isProxy(group.getPlatform())
+                    != (group.getType() == ServiceType.PROXY)) {
+                // Erst die Gruppe korrigieren; ein Widerspruch ist keine Dateifrage.
+                continue;
+            }
+            Optional<Path> directory = ServiceDirectories.directory(layout, info.getName());
+            if (directory.isEmpty()) {
+                continue;
+            }
+            known.put(info.getName(), info);
+            if (isProxyService(info, group)) {
+                proxies.put(info.getName(), directory.get());
+            } else {
+                backends.put(info.getName(), directory.get());
+            }
+        }
+        Map<String, ServiceInfo> broken = new LinkedHashMap<>();
+        for (ForwardingCheck.Finding mismatch : ForwardingCheck.compare(proxies, backends,
+                config.get().proxy().forwardingSecret())) {
+            ServiceInfo info = known.get(mismatch.service());
+            if (info != null) {
+                broken.put(mismatch.service(), info);
+            }
+        }
+        return broken;
+    }
+
+    private static boolean isProxyService(ServiceInfo info, ServiceGroup group) {
+        return group == null
+                ? info.getType() == ServiceType.PROXY
+                : group.getType() == ServiceType.PROXY;
     }
 
     /**

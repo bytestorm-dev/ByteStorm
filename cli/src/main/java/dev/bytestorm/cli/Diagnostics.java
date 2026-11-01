@@ -44,4 +44,16 @@ public interface Diagnostics {
      * @return Prüfergebnisse in Anzeigereihenfolge
      */
     List<Finding> run();
+
+    /**
+     * Behebt, was sich ohne Eingriff beheben lässt, und prüft danach erneut.
+     *
+     * <p>Die Standardumsetzung kennt nichts zu beheben und liefert nur die
+     * Prüfergebnisse.
+     *
+     * @return Meldungen zur Reparatur, gefolgt von den Prüfergebnissen
+     */
+    default List<Finding> fix() {
+        return run();
+    }
 }
