@@ -5,6 +5,7 @@ import dev.bytestorm.api.ByteStormApi;
 import dev.bytestorm.api.event.Events;
 import dev.bytestorm.api.event.Subscription;
 import dev.bytestorm.api.group.Groups;
+import dev.bytestorm.api.health.CloudHealth;
 import dev.bytestorm.api.module.Modules;
 import dev.bytestorm.api.player.Players;
 import dev.bytestorm.api.service.CrashBudget;
@@ -133,6 +134,7 @@ public final class DefaultByteStormApi implements ByteStormApi, AutoCloseable {
     private final TemplateManager templateManager;
     private final Modules moduleFacade;
     private final EventRegistrar eventRegistrar;
+    private final Supplier<CloudHealth> health;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
     private final Services services = new ServicesAdapter();
@@ -159,6 +161,30 @@ public final class DefaultByteStormApi implements ByteStormApi, AutoCloseable {
                                TemplateManager templateManager,
                                Modules modules,
                                EventRegistrar events) {
+        this(controller, scaler, groupManager, groupScaler, playerAccess, templateManager, modules, events,
+                () -> CloudHealth.unavailable("Healthcheck ist in dieser Fassade nicht angebunden"));
+    }
+
+    /**
+     * @param controller      Service-Fassade für Zustand, Stop, Neustart und Befehle
+     * @param scaler          Start/Stop über den Provisioner (§9)
+     * @param groupManager    Gruppen-Verwaltung mit Validierung und Cache
+     * @param groupScaler     manuelles Skalieren (§11)
+     * @param playerAccess    Spieler-Zugriffe
+     * @param templateManager Template-Verwaltung
+     * @param modules         Modul-Verwaltung
+     * @param events          Event-Abonnements
+     * @param health          Healthcheck für {@link #health()}
+     */
+    public DefaultByteStormApi(ServiceController controller,
+                               ScalingActions scaler,
+                               GroupManager groupManager,
+                               GroupScaler groupScaler,
+                               PlayerAccess playerAccess,
+                               TemplateManager templateManager,
+                               Modules modules,
+                               EventRegistrar events,
+                               Supplier<CloudHealth> health) {
         this.controller = Objects.requireNonNull(controller, "controller");
         this.scaler = Objects.requireNonNull(scaler, "scaler");
         this.groupManager = Objects.requireNonNull(groupManager, "groupManager");
@@ -167,6 +193,7 @@ public final class DefaultByteStormApi implements ByteStormApi, AutoCloseable {
         this.templateManager = Objects.requireNonNull(templateManager, "templateManager");
         this.moduleFacade = Objects.requireNonNull(modules, "modules");
         this.eventRegistrar = Objects.requireNonNull(events, "events");
+        this.health = Objects.requireNonNull(health, "health");
     }
 
     @Override
@@ -197,6 +224,16 @@ public final class DefaultByteStormApi implements ByteStormApi, AutoCloseable {
     @Override
     public Modules modules() {
         return moduleFacade;
+    }
+
+    @Override
+    public CloudHealth health() {
+        try {
+            return health.get();
+        } catch (RuntimeException e) {
+            // Ein ausgefallener Healthcheck ist selbst ein Befund, keine 500er-Antwort.
+            return CloudHealth.unavailable("Healthcheck fehlgeschlagen: " + messageOf(e));
+        }
     }
 
     @Override

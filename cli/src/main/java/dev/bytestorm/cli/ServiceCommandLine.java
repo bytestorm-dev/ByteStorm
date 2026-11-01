@@ -80,6 +80,7 @@ public final class ServiceCommandLine {
             BETRIEB
               platform list|tasks|info|versions|install|update  Plattformen (platform help)
               updater versions|check|update    Cloud aktualisieren (updater help)
+              backup [--out <datei>]|list      Mongo, config, templates und static sichern
               reload [config|groups]           Konfiguration und Gruppen-Cache neu laden
               doctor [--fix]               Pfade, Ports, Java, Mongo/Redis und Forwarding prüfen
               info                         Agent-Status und Ressourcen
@@ -97,6 +98,7 @@ public final class ServiceCommandLine {
     private final ModuleCommandLine modules;
     private final PlatformCommandLine platforms;
     private final UpdaterCommandLine updater;
+    private final BackupCommandLine backup;
     private final HostMetrics hostMetrics;
     private final Diagnostics diagnostics;
     private final Instant startedAt;
@@ -126,7 +128,7 @@ public final class ServiceCommandLine {
      */
     public ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
                               TemplateCommandLine templates, PlayerCommandLine players) {
-        this(controller, groups, templates, players, null, null, null, null, null, null,
+        this(controller, groups, templates, players, null, null, null, null, null, null, null,
                 Instant.now(), Clock.systemUTC());
     }
 
@@ -145,7 +147,7 @@ public final class ServiceCommandLine {
                               ReloadCommandLine reload, ModuleCommandLine modules,
                               PlatformCommandLine platforms, UpdaterCommandLine updater) {
         this(controller, groups, templates, players, reload, modules, platforms, updater,
-                null, null, Instant.now(), Clock.systemUTC());
+                null, null, null, Instant.now(), Clock.systemUTC());
     }
 
     /**
@@ -186,24 +188,47 @@ public final class ServiceCommandLine {
                               PlatformCommandLine platforms, UpdaterCommandLine updater,
                               HostMetrics hostMetrics, Diagnostics diagnostics) {
         this(controller, groups, templates, players, reload, modules, platforms, updater,
-                hostMetrics, diagnostics, Instant.now(), Clock.systemUTC());
+                hostMetrics, diagnostics, null);
+    }
+
+    /**
+     * @param controller  Controller-Fassade
+     * @param groups      Gruppen-Kommandos, {@code null} wenn nicht verfügbar
+     * @param templates   Template-Kommandos, {@code null} wenn nicht verfügbar
+     * @param players     Spieler-Kommandos, {@code null} wenn nicht verfügbar
+     * @param reload      {@code reload}, {@code null} wenn nicht verfügbar
+     * @param modules     Modul-Kommandos, {@code null} wenn nicht verfügbar
+     * @param platforms   Plattform-Kommandos, {@code null} wenn nicht verfügbar
+     * @param updater     Updater-Kommandos, {@code null} wenn nicht verfügbar
+     * @param hostMetrics Host-Auslastung für {@code status}, {@code null} wenn unbekannt
+     * @param diagnostics Prüfungen für {@code doctor}, {@code null} wenn nicht verfügbar
+     * @param backup      Sicherungen, {@code null} wenn nicht verfügbar
+     */
+    public ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
+                              TemplateCommandLine templates, PlayerCommandLine players,
+                              ReloadCommandLine reload, ModuleCommandLine modules,
+                              PlatformCommandLine platforms, UpdaterCommandLine updater,
+                              HostMetrics hostMetrics, Diagnostics diagnostics,
+                              BackupCommandLine backup) {
+        this(controller, groups, templates, players, reload, modules, platforms, updater,
+                hostMetrics, diagnostics, backup, Instant.now(), Clock.systemUTC());
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups, Instant startedAt, Clock clock) {
-        this(controller, groups, null, null, null, null, null, null, null, null, startedAt, clock);
+        this(controller, groups, null, null, null, null, null, null, null, null, null, startedAt, clock);
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
                        TemplateCommandLine templates, PlayerCommandLine players,
                        Instant startedAt, Clock clock) {
-        this(controller, groups, templates, players, null, null, null, null, null, null, startedAt, clock);
+        this(controller, groups, templates, players, null, null, null, null, null, null, null, startedAt, clock);
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
                        TemplateCommandLine templates, PlayerCommandLine players,
                        ReloadCommandLine reload, ModuleCommandLine modules,
                        PlatformCommandLine platforms, UpdaterCommandLine updater,
-                       HostMetrics hostMetrics, Diagnostics diagnostics,
+                       HostMetrics hostMetrics, Diagnostics diagnostics, BackupCommandLine backup,
                        Instant startedAt, Clock clock) {
         this.controller = Objects.requireNonNull(controller, "controller");
         this.groups = groups;
@@ -215,6 +240,7 @@ public final class ServiceCommandLine {
         this.updater = updater;
         this.hostMetrics = hostMetrics;
         this.diagnostics = diagnostics;
+        this.backup = backup;
         this.startedAt = Objects.requireNonNull(startedAt, "startedAt");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -285,6 +311,12 @@ public final class ServiceCommandLine {
                 return Theme.warn("Updater-Kommandos sind nicht verfügbar.");
             }
             return updater.execute(line.trim().split("\\s+"));
+        }
+        if (tokens[0].equalsIgnoreCase("backup")) {
+            if (backup == null) {
+                return Theme.warn("Sicherungen sind nicht verfügbar.");
+            }
+            return backup.execute(line.trim().split("\\s+"));
         }
         if (tokens[0].equalsIgnoreCase("watch")) {
             return Theme.warn("watch ist nur in der interaktiven Konsole verfügbar"

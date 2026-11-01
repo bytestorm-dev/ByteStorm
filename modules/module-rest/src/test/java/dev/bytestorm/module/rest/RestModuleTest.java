@@ -3,6 +3,7 @@ package dev.bytestorm.module.rest;
 import dev.bytestorm.api.ByteStormApi;
 import dev.bytestorm.api.CloudModule;
 import dev.bytestorm.api.group.Groups;
+import dev.bytestorm.api.health.CloudHealth;
 import dev.bytestorm.api.module.ModuleContext;
 import dev.bytestorm.api.player.Players;
 import dev.bytestorm.api.service.CrashBudget;
@@ -60,6 +61,10 @@ class RestModuleTest {
     private final FakeGroups groups = new FakeGroups();
 
     private final FakePlayers players = new FakePlayers();
+
+    /** Zustand, den {@code /health} und {@code /nodes/status} melden. */
+    private CloudHealth health = new CloudHealth(true,
+            List.of(new CloudHealth.Component("mongo", true, "OK")));
 
     @Test
     void servicesAnswerWithAValidKeyAnd401Without() throws Exception {
@@ -465,6 +470,74 @@ class RestModuleTest {
         }
     }
 
+    @Test
+    void healthAnswersWithTheComponentStateAndTheStatusCode() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            assertEquals(401, get(client, port, null, RestModule.HEALTH_PATH).statusCode(),
+                    "auch der Health-Endpunkt verlangt den Key");
+
+            HttpResponse<String> healthy = get(client, port, KEY, RestModule.HEALTH_PATH);
+            assertEquals(200, healthy.statusCode());
+            assertTrue(healthy.body().contains("\"up\":true"), healthy.body());
+            assertTrue(healthy.body().contains("\"mongo\""), healthy.body());
+
+            health = new CloudHealth(false,
+                    List.of(new CloudHealth.Component("redis", false, "keine Verbindung")));
+            HttpResponse<String> unhealthy = get(client, port, KEY, RestModule.HEALTH_PATH);
+            assertEquals(503, unhealthy.statusCode(),
+                    "ein nicht erreichbarer Bestandteil muss im Statuscode stehen");
+            assertTrue(unhealthy.body().contains("keine Verbindung"), unhealthy.body());
+        } finally {
+            health = new CloudHealth(true, List.of(new CloudHealth.Component("mongo", true, "OK")));
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void nodeStatusCountsServicesGroupsAndPlayers() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpResponse<String> response = get(client, port, KEY, RestModule.NODES_STATUS_PATH);
+
+            assertEquals(200, response.statusCode());
+            String body = response.body();
+            assertTrue(body.contains("\"services\""), body);
+            assertTrue(body.contains("\"ONLINE\""), body);
+            assertTrue(body.contains("\"groups\""), body);
+            assertTrue(body.contains("\"maintenance\":1"), body);
+            assertTrue(body.contains("\"players\":1"), body);
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void metricsUseThePrometheusTextFormat() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpResponse<String> response = get(client, port, KEY, RestModule.METRICS_PATH);
+
+            assertEquals(200, response.statusCode());
+            assertTrue(response.headers().firstValue("content-type").orElse("").startsWith("text/plain"),
+                    "Prometheus erwartet das Textformat");
+            String body = response.body();
+            assertTrue(body.contains("bytestorm_up 1"), body);
+            assertTrue(body.contains("# TYPE bytestorm_services gauge"), body);
+            assertTrue(body.contains("bytestorm_services{state=\"ONLINE\"}"), body);
+            assertTrue(body.contains("bytestorm_crash_budget_remaining{service=\"Lobby-1\"} 2"), body);
+            assertTrue(body.contains("bytestorm_health_component_up{component=\"mongo\"} 1"), body);
+        } finally {
+            module.onDisable();
+        }
+    }
+
     private RestModule module(Map<String, String> settings) {
         RestModule module = new RestModule();
         module.onLoad(context(settings, api()));
@@ -499,6 +572,11 @@ class RestModuleTest {
 
     private ByteStormApi api() {
         return new ByteStormApi() {
+            @Override
+            public CloudHealth health() {
+                return health;
+            }
+
             @Override
             public Services services() {
                 return services;

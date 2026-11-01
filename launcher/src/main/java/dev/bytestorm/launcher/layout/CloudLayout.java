@@ -133,4 +133,14 @@ public final class CloudLayout {
     public Path logs() {
         return root.resolve("logs");
     }
+
+    /**
+     * Ablage für Sicherungen. Entsteht erst mit der ersten Sicherung: Wer nie
+     * sichert, soll kein leeres Verzeichnis im Layout haben.
+     *
+     * @return Zielordner für {@code backup}
+     */
+    public Path backups() {
+        return root.resolve("backups");
+    }
 }

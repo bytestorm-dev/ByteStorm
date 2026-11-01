@@ -5,23 +5,27 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.bytestorm.api.ByteStormApi;
 import dev.bytestorm.api.CloudModule;
+import dev.bytestorm.api.health.CloudHealth;
 import dev.bytestorm.api.module.ModuleContext;
 import dev.bytestorm.api.service.CrashBudget;
 import dev.bytestorm.api.service.ServiceCrash;
 import dev.bytestorm.proto.PlayerInfo;
 import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
+import dev.bytestorm.proto.ServiceState;
 import dev.bytestorm.proto.StartServiceResponse;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -99,6 +103,18 @@ public final class RestModule implements CloudModule {
     /** {@code POST /players/kick} — Spieler vom Netz trennen (§14). */
     public static final String KICK_PATH = PLAYERS_PATH + "/kick";
 
+    /** {@code GET /health} — Zustand von MongoDB, Redis und Runtime (§11). */
+    public static final String HEALTH_PATH = "/health";
+
+    /** {@code GET /nodes/status} — Knotenübersicht für Skripte und Monitoring (§11). */
+    public static final String NODES_STATUS_PATH = "/nodes/status";
+
+    /** {@code GET /metrics} — dieselben Zahlen im Prometheus-Textformat (§11). */
+    public static final String METRICS_PATH = "/metrics";
+
+    /** Content-Type des Prometheus-Exports; die Version gehört in den Header. */
+    static final String METRICS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8";
+
     /** Wie lange eine Anfrage auf die Cloud wartet, bevor sie aufgibt. */
     static final long TIMEOUT_SECONDS = 30;
 
@@ -169,6 +185,9 @@ public final class RestModule implements CloudModule {
             config.routes.get(PLAYERS_PATH, ctx -> players(ctx, api));
             config.routes.post(CONNECT_PATH, ctx -> connect(ctx, api));
             config.routes.post(KICK_PATH, ctx -> kick(ctx, api));
+            config.routes.get(HEALTH_PATH, ctx -> health(ctx, api));
+            config.routes.get(NODES_STATUS_PATH, ctx -> nodeStatus(ctx, api));
+            config.routes.get(METRICS_PATH, ctx -> metrics(ctx, api));
             config.routes.exception(ApiException.class,
                     (error, ctx) -> error(ctx, error.status(), error.getMessage()));
             config.routes.exception(Exception.class, (error, ctx) -> {
@@ -487,6 +506,157 @@ public final class RestModule implements CloudModule {
         String reason = textOf(body, "reason", "");
         await(api.players().kick(UUID.fromString(uuid), reason));
         write(ctx, 200, Map.of("uuid", uuid, "kicked", true));
+    }
+
+    /**
+     * {@code GET /health}: Zustand der Bestandteile. Der Statuscode ist die
+     * Aussage ({@code 200} gesund, {@code 503} nicht), damit ein Uptime-Monitor
+     * nicht den Body lesen muss; er steht zusätzlich als {@code up} im JSON.
+     *
+     * @param ctx Anfrage
+     * @param api öffentliche API
+     */
+    private static void health(Context ctx, ByteStormApi api) {
+        CloudHealth health = api.health();
+        write(ctx, health.up() ? 200 : 503, healthJson(health));
+    }
+
+    /**
+     * {@code GET /nodes/status}: Knotenübersicht über Services, Gruppen, Spieler
+     * und Bestandteile — die Zahlen, die sonst nur die Konsole zeigt.
+     *
+     * @param ctx Anfrage
+     * @param api öffentliche API
+     */
+    private static void nodeStatus(Context ctx, ByteStormApi api) {
+        CloudHealth health = api.health();
+        Collection<ServiceInfo> services = List.copyOf(api.services().all());
+        Collection<ServiceGroup> groups = List.copyOf(api.groups().all());
+
+        Map<String, Integer> states = new LinkedHashMap<>();
+        Map<String, Integer> runtimes = new LinkedHashMap<>();
+        for (ServiceState state : ServiceState.values()) {
+            states.put(state.name(), 0);
+        }
+        for (ServiceInfo info : services) {
+            states.merge(info.getState().name(), 1, Integer::sum);
+            runtimes.merge(info.getRuntime().name(), 1, Integer::sum);
+        }
+        Map<String, Object> serviceCounts = new LinkedHashMap<>();
+        serviceCounts.put("total", services.size());
+        serviceCounts.putAll(states);
+
+        Map<String, Object> groupCounts = new LinkedHashMap<>();
+        groupCounts.put("total", groups.size());
+        groupCounts.put("maintenance", groups.stream().filter(ServiceGroup::getMaintenance).count());
+
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("up", health.up());
+        json.put("services", serviceCounts);
+        json.put("groups", groupCounts);
+        json.put("players", api.players().online().size());
+        json.put("runtimes", runtimes);
+        json.put("health", healthJson(health));
+        write(ctx, health.up() ? 200 : 503, json);
+    }
+
+    /**
+     * {@code GET /metrics}: dieselben Zahlen als Prometheus-Text. Der Exporter
+     * antwortet auch bei einem kranken Bestandteil mit {@code 200} — die Aussage
+     * steckt in {@code bytestorm_up}, sonst verwirft Prometheus die gesamte Probe.
+     *
+     * @param ctx Anfrage
+     * @param api öffentliche API
+     */
+    private static void metrics(Context ctx, ByteStormApi api) {
+        CloudHealth health = api.health();
+        Collection<ServiceInfo> services = List.copyOf(api.services().all());
+        Collection<ServiceGroup> groups = List.copyOf(api.groups().all());
+
+        StringBuilder text = new StringBuilder(1024);
+        help(text, "bytestorm_up", "1, wenn alle geprüften Bestandteile gesund sind");
+        text.append("bytestorm_up ").append(health.up() ? 1 : 0).append('\n');
+
+        help(text, "bytestorm_health_component_up", "Zustand eines Bestandteils (1 gesund, 0 nicht erreichbar)");
+        for (CloudHealth.Component component : health.components()) {
+            text.append("bytestorm_health_component_up{component=\"")
+                    .append(escape(component.name())).append("\"} ")
+                    .append(component.healthy() ? 1 : 0).append('\n');
+        }
+
+        help(text, "bytestorm_services", "Anzahl der Services je Zustand");
+        Map<String, Integer> states = new TreeMap<>();
+        for (ServiceInfo info : services) {
+            states.merge(info.getState().name(), 1, Integer::sum);
+        }
+        for (Map.Entry<String, Integer> entry : states.entrySet()) {
+            text.append("bytestorm_services{state=\"").append(escape(entry.getKey())).append("\"} ")
+                    .append(entry.getValue()).append('\n');
+        }
+
+        help(text, "bytestorm_services_total", "Anzahl aller bekannten Services");
+        text.append("bytestorm_services_total ").append(services.size()).append('\n');
+
+        help(text, "bytestorm_groups", "Anzahl der Gruppen");
+        text.append("bytestorm_groups ").append(groups.size()).append('\n');
+
+        help(text, "bytestorm_groups_maintenance", "Gruppen im Wartungsmodus");
+        text.append("bytestorm_groups_maintenance ")
+                .append(groups.stream().filter(ServiceGroup::getMaintenance).count()).append('\n');
+
+        help(text, "bytestorm_players_online", "Verbundene Spieler");
+        text.append("bytestorm_players_online ").append(api.players().online().size()).append('\n');
+
+        Map<String, CrashBudget> budgets = budgets(api);
+        if (!budgets.isEmpty()) {
+            help(text, "bytestorm_crash_budget_remaining", "Verbleibende Neustarts je Service");
+            for (Map.Entry<String, CrashBudget> entry : new TreeMap<>(budgets).entrySet()) {
+                text.append("bytestorm_crash_budget_remaining{service=\"")
+                        .append(escape(entry.getKey())).append("\"} ")
+                        .append(entry.getValue().remaining()).append('\n');
+            }
+        }
+
+        ctx.status(200);
+        // Direkt als Header gesetzt: Javalin würde an einen abgeleiteten Typ ein
+        // eigenes Charset hängen und die Versionsangabe verlieren.
+        ctx.header("Content-Type", METRICS_CONTENT_TYPE);
+        ctx.result(text.toString());
+    }
+
+    /**
+     * @param health Zustand der Cloud
+     * @return JSON-Abbild für {@code /health} und {@code /nodes/status}
+     */
+    private static Map<String, Object> healthJson(CloudHealth health) {
+        List<Map<String, Object>> components = health.components().stream()
+                .map(component -> {
+                    Map<String, Object> json = new LinkedHashMap<>();
+                    json.put("name", component.name());
+                    json.put("healthy", component.healthy());
+                    json.put("detail", component.detail());
+                    return json;
+                })
+                .toList();
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("up", health.up());
+        json.put("components", components);
+        return json;
+    }
+
+    private static void help(StringBuilder text, String name, String description) {
+        text.append("# HELP ").append(name).append(' ').append(description).append('\n')
+                .append("# TYPE ").append(name).append(" gauge\n");
+    }
+
+    /**
+     * Maskiert Label-Werte nach der Prometheus-Textkonvention.
+     *
+     * @param value Rohwert, z. B. ein Service-Name
+     * @return der maskierte Wert
+     */
+    private static String escape(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
     }
 
     /**

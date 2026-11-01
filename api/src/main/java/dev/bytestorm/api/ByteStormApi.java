@@ -2,6 +2,7 @@ package dev.bytestorm.api;
 
 import dev.bytestorm.api.event.Events;
 import dev.bytestorm.api.group.Groups;
+import dev.bytestorm.api.health.CloudHealth;
 import dev.bytestorm.api.module.Modules;
 import dev.bytestorm.api.player.Players;
 import dev.bytestorm.api.service.Services;
@@ -43,4 +44,17 @@ public interface ByteStormApi {
      * @return Zugriff auf optionale Module
      */
     Modules modules();
+
+    /**
+     * Zustand der Cloud-Bestandteile, wie ihn Health- und Monitoring-Endpunkte
+     * eines Moduls brauchen (§11, §18).
+     *
+     * <p>Die Vorgabe meldet „nicht verfügbar“, damit jede Implementierung der
+     * Fassade gültig bleibt; die Cloud selbst liefert den echten Healthcheck.
+     *
+     * @return der letzte Prüfstand
+     */
+    default CloudHealth health() {
+        return CloudHealth.unavailable("Healthcheck ist in dieser API nicht angebunden");
+    }
 }

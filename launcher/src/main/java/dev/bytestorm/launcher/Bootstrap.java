@@ -1,8 +1,10 @@
 package dev.bytestorm.launcher;
 
 import dev.bytestorm.api.ByteStorm;
+import dev.bytestorm.api.health.CloudHealth;
 import dev.bytestorm.api.service.PortRange;
 import dev.bytestorm.api.service.ServiceId;
+import dev.bytestorm.cli.BackupCommandLine;
 import dev.bytestorm.cli.GroupCommandLine;
 import dev.bytestorm.cli.ModuleCommandLine;
 import dev.bytestorm.cli.PlatformCommandLine;
@@ -44,6 +46,7 @@ import dev.bytestorm.core.redis.RedisProvider;
 import dev.bytestorm.core.redis.RedisUnavailableException;
 import dev.bytestorm.core.redis.ServiceReconciliation;
 import dev.bytestorm.launcher.api.DefaultByteStormApi;
+import dev.bytestorm.launcher.backup.CloudBackup;
 import dev.bytestorm.launcher.doctor.ControllerRepair;
 import dev.bytestorm.launcher.doctor.Doctor;
 import dev.bytestorm.launcher.layout.CloudLayout;
@@ -283,9 +286,12 @@ public final class Bootstrap implements AutoCloseable {
             shutdown.registerCloseable("modules", modules);
             // Die öffentliche API (§15) steht, bevor Module geladen werden: Sie ist deren
             // Zugang zur Cloud und später die Grundlage des REST-Moduls.
+            // Vor der API angelegt: `/health`, `/nodes/status` und `/metrics` lesen
+            // denselben Bericht, den der Start selbst prüft (§11).
+            Healthcheck healthcheck = Healthcheck.of(mongo, redis).withRuntime(runtimeProbe(config));
             DefaultByteStormApi api = new DefaultByteStormApi(controller, provisioner, groups, scaling,
                     DefaultByteStormApi.PlayerAccess.of(playerManager, playerRepository), templates,
-                    modules, core.events()::subscribe);
+                    modules, core.events()::subscribe, () -> toCloudHealth(healthcheck));
             ByteStorm.install(api);
             shutdown.register("api", () -> {
                 ByteStorm.uninstall();
@@ -314,11 +320,13 @@ public final class Bootstrap implements AutoCloseable {
                             () -> timed(mongo::ping), () -> timed(redis::ping),
                             // `doctor --fix` wendet die Templates an und startet laufende
                             // Services dafür neu.
-                            new ControllerRepair(controller)));
+                            new ControllerRepair(controller)),
+                    // Sicherung von MongoDB, config/, templates/ und static/ (§15).
+                    new BackupCommandLine(new CloudBackup(layout,
+                            CloudBackup.mongoExporter(mongo.database())), layout.backups()));
             log.info("Node-ServiceManager bereit (Runtime {}, Logs {}, Scaling {} s)",
                     config.runtime(), layout.logs(), config.scaling().intervalSeconds());
 
-            Healthcheck healthcheck = Healthcheck.of(mongo, redis).withRuntime(runtimeProbe(config));
             verify(healthcheck);
 
             return new Bootstrap(directory, layout, logFile, configService, mongo, redis, core,
@@ -563,6 +571,20 @@ public final class Bootstrap implements AutoCloseable {
                 throw new IllegalStateException("Java-Runtime nicht ausführbar: " + bin);
             }
         };
+    }
+
+    /**
+     * Übersetzt den internen Healthcheck in den öffentlichen Typ der API.
+     *
+     * @param healthcheck Fassade aus Mongo, Redis und Runtime
+     * @return der Bericht für Module und Monitoring-Endpunkte
+     */
+    private static CloudHealth toCloudHealth(Healthcheck healthcheck) {
+        HealthReport report = healthcheck.check(HEALTHCHECK_TIMEOUT);
+        return new CloudHealth(report.up(), report.components().values().stream()
+                .map(component -> new CloudHealth.Component(
+                        component.name(), component.healthy(), component.detail()))
+                .toList());
     }
 
     private static String timed(Runnable probe) {
