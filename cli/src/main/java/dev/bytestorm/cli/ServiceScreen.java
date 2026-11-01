@@ -150,17 +150,20 @@ final class ServiceScreen {
 
     private void readCommands(ServiceId id) throws IOException {
         while (true) {
+            // Vor jedem Lesen prüfen: Ein bereits beendeter Service schließt den
+            // Screen auch dann, wenn das Terminal keine Timeouts unterstützt und
+            // statt "abgelaufen" sofort EOF meldet (§17).
+            String ended = endedReason(id);
+            if (ended != null) {
+                printLine(ended);
+                return;
+            }
             int read = terminal.reader().read(POLL_MILLIS);
             if (read == NonBlockingReader.READ_EXPIRED) {
-                // Kein Tastendruck: prüfen, ob der Service noch lebt (§17).
-                String ended = endedReason(id);
-                if (ended != null) {
-                    printLine(ended);
-                    return;
-                }
                 continue;
             }
             if (read < 0 || read == DETACH || read == INTERRUPT) {
+                // Eingabe zu Ende: ohne Tastendruck endet der Screen still.
                 return;
             }
             if (read == '\r' || read == '\n') {
