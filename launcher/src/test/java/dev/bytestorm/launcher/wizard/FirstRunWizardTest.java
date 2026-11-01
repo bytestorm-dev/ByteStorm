@@ -7,6 +7,9 @@ import dev.bytestorm.core.config.PortSettings;
 import dev.bytestorm.core.config.RedisSettings;
 import dev.bytestorm.core.mongo.model.ModuleConfig;
 import dev.bytestorm.proto.RuntimeType;
+import dev.bytestorm.proto.ServiceGroup;
+import dev.bytestorm.proto.ServiceMode;
+import dev.bytestorm.proto.ServiceType;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -36,13 +39,14 @@ class FirstRunWizardTest {
     private final List<MongoSettings> mongoChecks = new ArrayList<>();
     private final List<RedisSettings> redisChecks = new ArrayList<>();
     private final List<MongoSettings> groupCalls = new ArrayList<>();
+    private final List<List<ServiceGroup>> groupDefinitions = new ArrayList<>();
     private final List<ModuleConfig> moduleCalls = new ArrayList<>();
     private final AtomicInteger mongoFailures = new AtomicInteger();
     private final AtomicInteger redisFailures = new AtomicInteger();
     private boolean groupCreationFails;
 
     @Test
-    void writesConfigAndCreatesDefaultGroups() throws Exception {
+    void writesConfigAndCreatesTheAskedGroup() throws Exception {
         ScriptedWizardIo io = minimalAnswers();
 
         CloudConfig written = wizard(io).run(temp);
@@ -64,8 +68,20 @@ class FirstRunWizardTest {
 
         assertEquals(1, groupCalls.size());
         assertEquals(loaded.mongo(), groupCalls.get(0));
+        assertEquals(1, groupDefinitions.size(), "der Erststart legt die abgefragte Gruppe an");
+        ServiceGroup group = groupDefinitions.get(0).get(0);
+        assertEquals("Lobby", group.getName());
+        assertEquals(ServiceType.SERVER, group.getType());
+        assertEquals("paper", group.getPlatform());
+        assertEquals(ServiceMode.DYNAMIC, group.getMode());
+        assertEquals(1, group.getMinServices());
+        assertEquals(3, group.getMaxServices());
+        assertEquals(100, group.getMaxPlayers());
+        assertEquals(2048, group.getMemory());
+        assertTrue(group.getFallback());
+        assertEquals(1, group.getFallbackPriority());
         assertTrue(io.messages().stream().anyMatch(message -> message.contains("Konfiguration gespeichert")));
-        assertTrue(io.messages().stream().anyMatch(message -> message.contains("Standardgruppen")));
+        assertTrue(io.messages().stream().anyMatch(message -> message.contains("Gruppen angelegt: Lobby")));
         assertTrue(moduleCalls.isEmpty(), "ohne aktiviertes Modul entsteht keine Modul-Konfiguration");
     }
 
@@ -245,14 +261,54 @@ class FirstRunWizardTest {
     }
 
     @Test
-    void keepsTheConfigWhenDefaultGroupsFail() throws Exception {
+    void keepsTheConfigWhenGroupCreationFails() throws Exception {
         groupCreationFails = true;
 
         ScriptedWizardIo io = minimalAnswers();
         wizard(io).run(temp);
 
         assertTrue(Files.exists(temp.resolve(FirstRunWizard.CONFIG_FILE)));
-        assertTrue(io.messages().stream().anyMatch(message -> message.contains("Standardgruppen konnten nicht")));
+        assertTrue(io.messages().stream().anyMatch(message -> message.contains("Gruppen konnten nicht")),
+                io.messages().toString());
+    }
+
+    @Test
+    void asksAgainWhileTheUserWantsMoreGroups() throws Exception {
+        ScriptedWizardIo io = configAnswers()
+                .answer("Name", "Proxy", "Lobby")
+                .answer("Typ", "PROXY", "SERVER")
+                .answer("Plattform", "velocity", "paper")
+                .answer("Modus", "STATIC", "DYNAMIC")
+                .answer("Min. Services", "1", "1")
+                .answer("Max. Services", "1", "3")
+                .answer("Spieler je Service", "100")
+                .answer("Speicher", "512", "2048")
+                .answer("Fallback-Ziel", "j")
+                .answer("Weitere Gruppe anlegen?", "j", "n");
+
+        wizard(io).run(temp);
+
+        assertEquals(1, groupDefinitions.size());
+        assertEquals(List.of("Proxy", "Lobby"),
+                groupDefinitions.get(0).stream().map(ServiceGroup::getName).toList());
+        assertEquals(ServiceType.PROXY, groupDefinitions.get(0).get(0).getType());
+        assertEquals(0, groupDefinitions.get(0).get(0).getMaxPlayers(), "ein Proxy zählt keine Spieler");
+        assertTrue(groupDefinitions.get(0).get(1).getFallback());
+        assertTrue(io.messages().stream()
+                        .anyMatch(message -> message.contains("Gruppen angelegt: Proxy, Lobby")),
+                io.messages().toString());
+    }
+
+    @Test
+    void anAbortWhileAskingForGroupsWritesNoConfig() {
+        // Abbruch an der ersten Frage der Gruppe: vorher ist die Konfiguration fertig geprüft.
+        ScriptedWizardIo io = configAnswers().failOn("Name");
+
+        assertThrows(WizardAbortedException.class, () -> wizard(io).run(temp));
+
+        assertFalse(Files.exists(temp.resolve(FirstRunWizard.CONFIG_FILE)),
+                "die Konfiguration entsteht erst nach den Gruppen");
+        assertTrue(groupDefinitions.isEmpty());
     }
 
     @Test
@@ -273,6 +329,13 @@ class FirstRunWizardTest {
     }
 
     private ScriptedWizardIo minimalAnswers() {
+        return oneGroup(configAnswers());
+    }
+
+    /**
+     * @return Antworten für die Konfiguration, ohne die Gruppen des Erststarts
+     */
+    private static ScriptedWizardIo configAnswers() {
         return new ScriptedWizardIo()
                 .answer("MongoDB-URI", "mongodb://db:27017")
                 .answer("MongoDB-Benutzer", "")
@@ -284,6 +347,23 @@ class FirstRunWizardTest {
                 .answer("Server-Startport", "")
                 .answer("REST-Modul", "n")
                 .answer("Discord-Modul", "n");
+    }
+
+    /**
+     * Ergänzt eine Server-Gruppe — der Erststart fragt mindestens eine ab.
+     */
+    private static ScriptedWizardIo oneGroup(ScriptedWizardIo io) {
+        return io
+                .answer("Name", "Lobby")
+                .answer("Typ", "SERVER")
+                .answer("Plattform", "paper")
+                .answer("Modus", "DYNAMIC")
+                .answer("Min. Services", "1")
+                .answer("Max. Services", "3")
+                .answer("Spieler je Service", "100")
+                .answer("Speicher", "2048")
+                .answer("Fallback-Ziel", "j")
+                .answer("Weitere Gruppe anlegen?", "n");
     }
 
     private FirstRunWizard wizard(ScriptedWizardIo io) {
@@ -304,11 +384,13 @@ class FirstRunWizardTest {
                 }
             }
         };
-        return new FirstRunWizard(io, tester, settings -> {
+        return new FirstRunWizard(io, tester, (settings, groups) -> {
             groupCalls.add(settings);
+            groupDefinitions.add(List.copyOf(groups));
             if (groupCreationFails) {
                 throw new IllegalStateException("keine Rechte");
             }
+            return groups.stream().map(ServiceGroup::getName).toList();
         }, (settings, modules) -> moduleCalls.addAll(modules));
     }
 }

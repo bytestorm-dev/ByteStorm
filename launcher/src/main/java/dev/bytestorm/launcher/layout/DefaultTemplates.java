@@ -13,8 +13,9 @@ import java.util.List;
 /**
  * Legt die Standard-Templates für Proxy und Server an (§10, §14).
  *
- * <p>Die Dateien sind das Gegenstück zu {@link dev.bytestorm.launcher.wizard.DefaultGroups}:
- * Gruppen allein starten noch keinen funktionierenden Netzwerkverbund. Erst diese
+ * <p>Die Dateien ergänzen die Gruppen aus dem Erststart
+ * ({@link dev.bytestorm.launcher.wizard.GroupSetup}): Gruppen allein starten noch
+ * keinen funktionierenden Netzwerkverbund. Erst diese
  * Templates setzen den Port, schalten Paper auf {@code online-mode=false}, aktivieren
  * Velocity Modern Forwarding und verteilen das gemeinsame Secret über
  * {@code %SECRET%} an Proxy und Backends.

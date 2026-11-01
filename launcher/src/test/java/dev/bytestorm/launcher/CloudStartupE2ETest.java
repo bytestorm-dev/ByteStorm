@@ -3,9 +3,12 @@ package dev.bytestorm.launcher;
 import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.core.config.MongoSettings;
 import dev.bytestorm.core.mongo.MongoProvider;
-import dev.bytestorm.launcher.wizard.DefaultGroups;
+import dev.bytestorm.launcher.wizard.GroupSetup;
+import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
+import dev.bytestorm.proto.ServiceMode;
 import dev.bytestorm.proto.ServiceState;
+import dev.bytestorm.proto.ServiceType;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -66,7 +69,29 @@ class CloudStartupE2ETest {
                 # Zustimmung nur für diesen Wegwerfordner des E2E-Tests.
                 eula=true
                 """);
-        DefaultGroups.create(new MongoSettings(mongoUri(), database));
+        // Feste Gruppen statt Wizard: Der Erststart fragt sie ab, dieser Test hat kein Terminal.
+        GroupSetup.create(new MongoSettings(mongoUri(), database), List.of(
+                ServiceGroup.newBuilder()
+                        .setName("Proxy")
+                        .setType(ServiceType.PROXY)
+                        .setPlatform("velocity")
+                        .setMode(ServiceMode.STATIC)
+                        .setMinServices(1)
+                        .setMaxServices(1)
+                        .setMemory(512)
+                        .build(),
+                ServiceGroup.newBuilder()
+                        .setName("Lobby")
+                        .setType(ServiceType.SERVER)
+                        .setPlatform("paper")
+                        .setMode(ServiceMode.DYNAMIC)
+                        .setMinServices(1)
+                        .setMaxServices(3)
+                        .setMaxPlayers(100)
+                        .setMemory(2048)
+                        .setFallback(true)
+                        .setFallbackPriority(1)
+                        .build()));
 
         Bootstrap bootstrap = Bootstrap.start(directory);
         try {

@@ -53,7 +53,7 @@ import dev.bytestorm.launcher.platform.PlatformDownloader;
 import dev.bytestorm.launcher.scaling.ServiceProvisioner;
 import dev.bytestorm.launcher.update.UpdateNotifier;
 import dev.bytestorm.launcher.wizard.DefaultConnectionTester;
-import dev.bytestorm.launcher.wizard.DefaultGroups;
+import dev.bytestorm.launcher.wizard.GroupSetup;
 import dev.bytestorm.launcher.wizard.DefaultModules;
 import dev.bytestorm.launcher.wizard.FirstRunWizard;
 import dev.bytestorm.launcher.wizard.JLineWizardIo;
@@ -650,7 +650,7 @@ public final class Bootstrap implements AutoCloseable {
         Logging.configure(directory);
         log.info("Keine Konfiguration gefunden — starte Erststart-Wizard");
         try (JLineWizardIo io = new JLineWizardIo()) {
-            new FirstRunWizard(io, new DefaultConnectionTester(), DefaultGroups::create,
+            new FirstRunWizard(io, new DefaultConnectionTester(), GroupSetup::create,
                     DefaultModules::create).run(directory);
         } catch (WizardAbortedException e) {
             throw new ConfigException("Einrichtung abgebrochen: " + e.getMessage(), e);

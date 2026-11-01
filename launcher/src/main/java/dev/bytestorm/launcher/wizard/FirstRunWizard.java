@@ -14,6 +14,7 @@ import dev.bytestorm.core.config.RedisSettings;
 import dev.bytestorm.core.config.ScalingSettings;
 import dev.bytestorm.core.mongo.model.ModuleConfig;
 import dev.bytestorm.proto.RuntimeType;
+import dev.bytestorm.proto.ServiceGroup;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -23,7 +24,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
+import java.util.function.BiFunction;
 
 /**
  * Erststart-Wizard (§5.1).
@@ -40,9 +41,10 @@ import java.util.function.Consumer;
  * Konfiguration noch eine temporäre Datei.
  *
  * <p>Erst nach erfolgreicher Prüfung wird die Konfiguration atomar und mit
- * Rechten {@code 0600} geschrieben, weil sie Zugangsdaten enthält (§20). Dann
- * entstehen die Standardgruppen und die aktivierten Module samt Einstellungen —
- * ein aktiviertes REST-Modul bekommt hier seinen API-Key (§11, §16).
+ * Rechten {@code 0600} geschrieben, weil sie Zugangsdaten enthält (§20). Danach
+ * entstehen die zuvor abgefragten Gruppen ({@link GroupSetup}) und die aktivierten
+ * Module samt Einstellungen — ein aktiviertes REST-Modul bekommt hier seinen
+ * API-Key (§11, §16).
  */
 public final class FirstRunWizard {
 
@@ -99,30 +101,32 @@ public final class FirstRunWizard {
 
     private final WizardIo io;
     private final ConnectionTester tester;
-    private final Consumer<MongoSettings> defaultGroups;
+    private final BiFunction<MongoSettings, List<ServiceGroup>, List<String>> groupSetup;
     private final BiConsumer<MongoSettings, List<ModuleConfig>> moduleSetup;
 
     /**
-     * @param io            Ein-/Ausgabe
-     * @param tester        Prüfung der Verbindungen
-     * @param defaultGroups legt nach dem Speichern die Standardgruppen an
+     * @param io         Ein-/Ausgabe
+     * @param tester     Prüfung der Verbindungen
+     * @param groupSetup legt nach dem Speichern die abgefragten Gruppen an
      */
-    public FirstRunWizard(WizardIo io, ConnectionTester tester, Consumer<MongoSettings> defaultGroups) {
-        this(io, tester, defaultGroups, (settings, modules) -> {
+    public FirstRunWizard(WizardIo io, ConnectionTester tester,
+                          BiFunction<MongoSettings, List<ServiceGroup>, List<String>> groupSetup) {
+        this(io, tester, groupSetup, (settings, modules) -> {
         });
     }
 
     /**
-     * @param io            Ein-/Ausgabe
-     * @param tester        Prüfung der Verbindungen
-     * @param defaultGroups legt nach dem Speichern die Standardgruppen an
-     * @param moduleSetup   speichert die Konfiguration der aktivierten Module
+     * @param io         Ein-/Ausgabe
+     * @param tester     Prüfung der Verbindungen
+     * @param groupSetup legt nach dem Speichern die abgefragten Gruppen an
+     * @param moduleSetup speichert die Konfiguration der aktivierten Module
      */
-    public FirstRunWizard(WizardIo io, ConnectionTester tester, Consumer<MongoSettings> defaultGroups,
+    public FirstRunWizard(WizardIo io, ConnectionTester tester,
+                          BiFunction<MongoSettings, List<ServiceGroup>, List<String>> groupSetup,
                           BiConsumer<MongoSettings, List<ModuleConfig>> moduleSetup) {
         this.io = Objects.requireNonNull(io, "io");
         this.tester = Objects.requireNonNull(tester, "tester");
-        this.defaultGroups = Objects.requireNonNull(defaultGroups, "defaultGroups");
+        this.groupSetup = Objects.requireNonNull(groupSetup, "groupSetup");
         this.moduleSetup = Objects.requireNonNull(moduleSetup, "moduleSetup");
     }
 
@@ -141,15 +145,19 @@ public final class FirstRunWizard {
         Questionnaire form = form();
         Answers answers = io.fill(form, Answers.empty(), QuestionnaireNotice.none());
         CloudConfig config = complete(form, answers);
+        // Erst fragen, dann schreiben: Ein Abbruch bei den Gruppen hinterlässt keine Konfiguration.
+        List<ServiceGroup> groups = GroupSetup.ask(io);
 
         ConfigWriter.write(configFile, config);
         io.message("Konfiguration gespeichert: " + configFile);
 
         try {
-            defaultGroups.accept(config.mongo());
-            io.message("Standardgruppen 'Proxy' und 'Lobby' sind angelegt (falls noch nicht vorhanden).");
+            List<String> created = groupSetup.apply(config.mongo(), groups);
+            io.message(created.isEmpty()
+                    ? "Gruppen unverändert (schon vorhanden): " + names(groups) + "."
+                    : "Gruppen angelegt: " + String.join(", ", created) + ".");
         } catch (RuntimeException e) {
-            io.message("Hinweis: Standardgruppen konnten nicht angelegt werden: " + describe(e));
+            io.message("Hinweis: Gruppen konnten nicht angelegt werden: " + describe(e));
         }
         List<ModuleConfig> modules = modules(form, answers, config);
         if (!modules.isEmpty()) {
@@ -376,6 +384,10 @@ public final class FirstRunWizard {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    private static String names(List<ServiceGroup> groups) {
+        return String.join(", ", groups.stream().map(ServiceGroup::getName).toList());
     }
 
     private static String describe(Throwable error) {

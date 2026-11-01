@@ -103,7 +103,7 @@ public final class JLineWizardIo implements WizardIo, AutoCloseable {
         String line = text == null ? "" : text;
         if (line.startsWith("Hinweis") || line.startsWith("Bitte")) {
             line = Theme.warn(line);
-        } else if (line.startsWith("Konfiguration") || line.startsWith("Standardgruppen")
+        } else if (line.startsWith("Konfiguration") || line.startsWith("Gruppen")
                 || line.startsWith("Modul-Konfiguration")) {
             line = Theme.ok(line);
         }
