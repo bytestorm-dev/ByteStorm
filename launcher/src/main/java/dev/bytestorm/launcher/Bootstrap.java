@@ -44,6 +44,7 @@ import dev.bytestorm.core.redis.RedisProvider;
 import dev.bytestorm.core.redis.RedisUnavailableException;
 import dev.bytestorm.core.redis.ServiceReconciliation;
 import dev.bytestorm.launcher.api.DefaultByteStormApi;
+import dev.bytestorm.launcher.doctor.ControllerRepair;
 import dev.bytestorm.launcher.doctor.Doctor;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.launcher.layout.DefaultTemplates;
@@ -64,7 +65,6 @@ import dev.bytestorm.node.bridge.BridgeRegistrar;
 import dev.bytestorm.node.crash.CrashHandler;
 import dev.bytestorm.node.crash.CrashReportWriter;
 import dev.bytestorm.node.crash.CrashSupport;
-import dev.bytestorm.node.lifecycle.ServiceLifecycleException;
 import dev.bytestorm.node.lifecycle.ServiceManager;
 import dev.bytestorm.node.template.TemplatePreparer;
 import dev.bytestorm.node.runtime.DockerRuntime;
@@ -296,8 +296,9 @@ public final class Bootstrap implements AutoCloseable {
                     // `doctor` prüft Pfade, Ports, Java, Datenbanken, Adressen und Forwarding (§14).
                     new Doctor(layout, configService::current, groups::all, controller::services,
                             () -> timed(mongo::ping), () -> timed(redis::ping),
-                            // `doctor --fix` wendet die Templates gestoppter Services erneut an.
-                            name -> reapplyTemplates(controller, name)));
+                            // `doctor --fix` wendet die Templates an und startet laufende
+                            // Services dafür neu.
+                            new ControllerRepair(controller)));
             log.info("Node-ServiceManager bereit (Runtime {}, Logs {}, Scaling {} s)",
                     config.runtime(), layout.logs(), config.scaling().intervalSeconds());
 
@@ -424,24 +425,6 @@ public final class Bootstrap implements AutoCloseable {
     @Override
     public void close() {
         shutdown.shutdown();
-    }
-
-    /**
-     * {@code doctor --fix}: Der Befund nennt einen Service-Namen, die
-     * Controller-Fassade arbeitet mit IDs.
-     *
-     * @param controller Controller der Cloud
-     * @param name       Service-Name aus der Diagnose
-     */
-    private static void reapplyTemplates(ServiceController controller, String name) {
-        ServiceInfo info = controller.byName(name)
-                .orElseThrow(() -> new IllegalStateException("Unbekannter Service: " + name));
-        try {
-            controller.reapply(ServiceId.parse(info.getId()));
-        } catch (ServiceLifecycleException e) {
-            throw new IllegalStateException("Templates von '" + name + "' nicht angewendet: "
-                    + e.getMessage(), e);
-        }
     }
 
     private static void verify(Healthcheck healthcheck) {

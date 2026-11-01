@@ -217,7 +217,7 @@ class DoctorTest {
     }
 
     @Test
-    void fixLeavesARunningProxyAloneAndNamesTheRestart() throws IOException {
+    void fixRestartsARunningProxyWithBrokenForwarding() throws IOException {
         CloudLayout layout = new CloudLayout(root);
         layout.create();
         Path proxy = layout.staticServices().resolve("Proxy-1");
@@ -227,18 +227,74 @@ class DoctorTest {
                 forwarding-secret-file = "forwarding.secret"
                 """);
         Files.writeString(proxy.resolve("forwarding.secret"), "fremd\n");
-        List<String> repaired = new ArrayList<>();
+        List<String> actions = new ArrayList<>();
 
         Doctor doctor = new Doctor(layout,
                 () -> CloudConfig.defaults().withForwardingSecret("richtig"),
                 () -> List.of(),
                 () -> List.of(service("Proxy-1", ServiceType.PROXY, 25565)),
-                () -> "ok", () -> "ok", repaired::add);
+                () -> "ok", () -> "ok",
+                new Doctor.Repair() {
+                    @Override
+                    public void reapply(String service) {
+                        actions.add("reapply:" + service);
+                    }
+
+                    @Override
+                    public void restart(String service) {
+                        actions.add("restart:" + service);
+                    }
+                });
 
         List<Diagnostics.Finding> findings = doctor.fix();
 
-        assertEquals(List.of(), repaired, "ein laufender Service wird nicht angefasst");
-        assertTrue(has(findings, "Reparatur", "'service restart Proxy-1'"), findings.toString());
+        assertEquals(List.of("restart:Proxy-1"), actions,
+                "ein laufender Proxy muss stoppen, damit die Templates greifen");
+        assertTrue(has(findings, "Reparatur", "Proxy-1 neu gestartet (ONLINE)"), findings.toString());
+    }
+
+    @Test
+    void fixReappliesTemplatesToAStoppedBackend() throws IOException {
+        CloudLayout layout = new CloudLayout(root);
+        layout.create();
+        Path backend = layout.staticServices().resolve("Lobby-1");
+        Files.createDirectories(backend.resolve("config"));
+        Files.writeString(backend.resolve(ForwardingCheck.PAPER_CONFIG), """
+                proxies:
+                  velocity:
+                    enabled: true
+                    online-mode: true
+                    secret: 'falsch'
+                """);
+        List<String> repaired = new ArrayList<>();
+
+        Doctor doctor = new Doctor(layout,
+                () -> CloudConfig.defaults().withForwardingSecret("richtig"),
+                () -> List.of(),
+                () -> List.of(service("Lobby-1", ServiceType.SERVER, ServiceState.STOPPED, 30001)),
+                () -> "ok", () -> "ok",
+                service -> {
+                    repaired.add(service);
+                    try {
+                        Files.writeString(backend.resolve(ForwardingCheck.PAPER_CONFIG), """
+                                proxies:
+                                  velocity:
+                                    enabled: true
+                                    online-mode: true
+                                    secret: 'richtig'
+                                """);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+
+        List<Diagnostics.Finding> findings = doctor.fix();
+
+        assertEquals(List.of("Lobby-1"), repaired);
+        assertTrue(has(findings, "Reparatur", "Lobby-1: Templates erneut angewendet"),
+                findings.toString());
+        assertFalse(has(findings, "Forwarding", "paper-global.yml weicht"),
+                "nach dem erneuten Anwenden passt das Backend: " + findings);
     }
 
     @Test

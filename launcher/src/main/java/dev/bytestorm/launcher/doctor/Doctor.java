@@ -59,9 +59,11 @@ public final class Doctor implements Diagnostics {
     }
 
     /**
-     * Wendet die Templates eines Services erneut an ({@code doctor --fix}).
-     * Die Prüfungen kennen nur Service-Namen; die Controller-Fassade arbeitet
-     * mit IDs.
+     * Repariert einen Service ({@code doctor --fix}).
+     *
+     * <p>Die Prüfungen kennen nur Service-Namen; die Controller-Fassade arbeitet
+     * mit IDs. Eine Implementierung darf beide Methoden bedienen — die
+     * Standardausführung des Neustarts wendet nur die Templates an.
      */
     @FunctionalInterface
     public interface Repair {
@@ -71,6 +73,17 @@ public final class Doctor implements Diagnostics {
          * @throws RuntimeException wenn das erneute Anwenden fehlschlägt
          */
         void reapply(String service);
+
+        /**
+         * Stoppt den Service, wendet die Templates an und startet ihn neu. Nur so
+         * übernimmt ein laufender Prozess die geänderten Dateien.
+         *
+         * @param service Service-Name
+         * @throws RuntimeException wenn Stop, Anwenden oder Start fehlschlägt
+         */
+        default void restart(String service) {
+            reapply(service);
+        }
     }
 
     private final CloudLayout layout;
@@ -141,8 +154,9 @@ public final class Doctor implements Diagnostics {
      * Wendet die Templates auf die Services an, deren Forwarding-Dateien nicht
      * zur Konfiguration passen, und prüft anschließend erneut (§14, §17).
      *
-     * <p>Ein laufender Service wird nicht angefasst: Er liest seine Konfiguration
-     * nur beim Start, deshalb nennt die Ausgabe für ihn den Neustart.
+     * <p>Ein laufender Service wird dafür neu gestartet: Er liest seine
+     * Konfiguration nur beim Start, und ohne erneutes Anwenden bliebe ein schon
+     * vorbereiteter statischer Ordner unverändert.
      */
     @Override
     public List<Finding> fix() {
@@ -161,9 +175,16 @@ public final class Doctor implements Diagnostics {
                 String name = entry.getKey();
                 ServiceState state = entry.getValue().getState();
                 if (state != ServiceState.STOPPED && state != ServiceState.CRASHED) {
-                    findings.add(new Finding(Severity.WARNING, "Reparatur",
-                            name + " läuft (" + state + ") — 'service restart " + name
-                                    + "' wendet die Templates beim Neustart an"));
+                    // Ein laufender Service liest seine Dateien erst beim Start; nur
+                    // Stop → Templates → Start bringt die Änderung in den Prozess.
+                    try {
+                        repair.restart(name);
+                        findings.add(new Finding(Severity.OK, "Reparatur",
+                                name + " neu gestartet (" + state + ") — Templates angewendet"));
+                    } catch (RuntimeException e) {
+                        findings.add(new Finding(Severity.WARNING, "Reparatur",
+                                name + ": " + messageOf(e)));
+                    }
                     continue;
                 }
                 try {
