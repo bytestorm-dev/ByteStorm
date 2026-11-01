@@ -10,6 +10,7 @@ import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.launcher.layout.ServiceDirectories;
 import dev.bytestorm.node.template.ForwardingCheck;
 import dev.bytestorm.node.template.TemplateLayers;
+import dev.bytestorm.node.template.TemplatePreparer;
 import dev.bytestorm.proto.RuntimeType;
 import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
@@ -36,7 +37,8 @@ import java.util.function.Supplier;
  * <p>Die Prüfungen decken die Fragen ab, die sonst erst im Backend-Log oder gar
  * nicht sichtbar werden: Sind alle Verzeichnisse da, passt der Java-Stand,
  * liegen Ports im Pool, antworten MongoDB und Redis, ist eine Adresse doppelt
- * belegt — und nutzen Proxy und Backends dasselbe Forwarding-Secret (§14). Die
+ * belegt, sind Proxy-Gruppe und Fallback-Ziel überhaupt konfiguriert — und nutzen
+ * Proxy und Backends dasselbe Forwarding-Secret (§14). Die
  * Klasse fasst nichts an: Sie liest Dateien und ruft die übergebenen
  * Verbindungsproben auf.
  */
@@ -98,6 +100,7 @@ public final class Doctor implements Diagnostics {
         connection(findings, "MongoDB", mongo);
         connection(findings, "Redis", redis);
         addresses(findings, known);
+        groups(findings, definitions);
         forwarding(findings, known, definitions, current.proxy().forwardingSecret());
         return List.copyOf(findings);
     }
@@ -344,13 +347,86 @@ public final class Doctor implements Diagnostics {
                         mismatch.severity() == ForwardingCheck.Severity.ERROR
                                 ? Severity.ERROR : Severity.WARNING,
                         "Forwarding",
-                        mismatch.service() + ": " + mismatch.message()));
+                        mismatch.service() + ": " + mismatch.message()
+                                + repairHint(mismatch.service(), proxies)));
             }
         }
         if (proxies.isEmpty() && !hasProxyGroup) {
             findings.add(new Finding(Severity.WARNING, "Forwarding",
                     "kein Proxy gefunden — die Backends warten auf einen Proxy"));
         }
+    }
+
+    /**
+     * Nennt den Befehl, der eine falsche Proxy-Konfiguration geradezieht. Hat der
+     * Template-Preparer den Ordner noch nie gesehen (etwa weil eine Jar ihn vorher
+     * gefüllt hat), genügt ein Neustart; danach überschreibt {@code reapply} die
+     * Dateien aus den Templates, ohne den Service zu starten.
+     */
+    private static String repairHint(String service, Map<String, Path> proxies) {
+        Path directory = proxies.get(service);
+        if (directory == null) {
+            return "";
+        }
+        if (!Files.isRegularFile(directory.resolve(TemplatePreparer.PREPARED_MARKER))) {
+            return " — 'service restart " + service + "' wendet die Templates an";
+        }
+        return " — 'service reapply " + service + "' überschreibt die Dateien aus den Templates";
+    }
+
+    /**
+     * Ohne Proxy-Gruppe kommt kein Spieler herein, ohne Fallback-Ziel reicht der
+     * Proxy neue Spieler an niemanden weiter (§9.1, §14). Der Check sieht sich die
+     * Gruppen an, nicht die laufenden Services — er greift also auch, bevor der
+     * erste Service gestartet ist.
+     */
+    private void groups(List<Finding> findings, Map<String, ServiceGroup> definitions) {
+        List<ServiceGroup> proxies = definitions.values().stream()
+                .filter(Doctor::isProxyGroup)
+                .toList();
+        List<ServiceGroup> backends = definitions.values().stream()
+                .filter(group -> !isProxyGroup(group))
+                .toList();
+        if (proxies.isEmpty() && backends.isEmpty()) {
+            findings.add(new Finding(Severity.ERROR, "Gruppen",
+                    "keine Gruppen definiert — ohne sie startet die Cloud nichts"
+                            + " (group create oder den Erststart-Wizard nutzen)"));
+            return;
+        }
+        if (proxies.isEmpty()) {
+            findings.add(new Finding(Severity.ERROR, "Gruppen",
+                    "keine Proxy-Gruppe — Spieler erreichen die Cloud nicht"
+                            + " (group create Proxy --type PROXY --platform velocity)"));
+        }
+        if (backends.isEmpty()) {
+            findings.add(new Finding(Severity.ERROR, "Gruppen",
+                    "keine Server-Gruppe — der Proxy hat kein Ziel für Spieler"
+                            + " (group create Lobby --platform paper --fallback)"));
+            return;
+        }
+        List<ServiceGroup> fallbacks = backends.stream()
+                .filter(ServiceGroup::getFallback)
+                .toList();
+        if (fallbacks.isEmpty()) {
+            findings.add(new Finding(Severity.WARNING, "Gruppen",
+                    "kein Fallback-Ziel — neue Spieler haben keinen Server"
+                            + " (group edit " + backends.get(0).getName() + " --fallback)"));
+        } else if (!proxies.isEmpty()) {
+            findings.add(new Finding(Severity.OK, "Gruppen",
+                    "Proxy " + names(proxies) + ", Fallback " + names(fallbacks)));
+        }
+    }
+
+    /**
+     * Eine Velocity-Gruppe ist auch dann als Proxy gemeint, wenn sie als SERVER
+     * angelegt wurde — den Widerspruch meldet bereits {@link #forwarding}.
+     */
+    private static boolean isProxyGroup(ServiceGroup group) {
+        return group.getType() == ServiceType.PROXY || Platforms.isProxy(group.getPlatform());
+    }
+
+    private static String names(List<ServiceGroup> groups) {
+        return String.join(", ", groups.stream().map(group -> "'" + group.getName() + "'").toList());
     }
 
     private static String address(String host, int port) {

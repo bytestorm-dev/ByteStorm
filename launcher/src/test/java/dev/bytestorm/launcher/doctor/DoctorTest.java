@@ -4,6 +4,7 @@ import dev.bytestorm.cli.Diagnostics;
 import dev.bytestorm.core.config.CloudConfig;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.node.template.ForwardingCheck;
+import dev.bytestorm.node.template.TemplatePreparer;
 import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceState;
@@ -123,6 +124,132 @@ class DoctorTest {
 
         assertTrue(has(findings, "Adressen", "veraltete Server-Einträge"), findings.toString());
         assertTrue(has(findings, "Adressen", "'lobby' zeigt auf 127.0.0.1:30001"), findings.toString());
+    }
+
+    @Test
+    void aProxyWithoutTemplatesIsPointedAtTheRestartCommand() throws IOException {
+        CloudLayout layout = new CloudLayout(root);
+        layout.create();
+        Path proxy = layout.staticServices().resolve("Proxy-1");
+        Files.createDirectories(proxy);
+        Files.writeString(proxy.resolve(ForwardingCheck.VELOCITY_CONFIG), """
+                player-info-forwarding-mode = "NONE"
+                forwarding-secret-file = "forwarding.secret"
+                """);
+        Files.writeString(proxy.resolve("forwarding.secret"), "fremd\n");
+
+        List<Diagnostics.Finding> findings = new Doctor(layout,
+                () -> CloudConfig.defaults().withForwardingSecret("richtig"),
+                () -> List.of(),
+                () -> List.of(service("Proxy-1", ServiceType.PROXY, 25565)),
+                () -> "ok", () -> "ok").run();
+
+        assertTrue(has(findings, "Forwarding", "player-info-forwarding-mode ist 'NONE'"),
+                findings.toString());
+        assertTrue(has(findings, "Forwarding", "'service restart Proxy-1'"),
+                "ein Ordner ohne Template-Marker wird beim Neustart vorbereitet: " + findings);
+    }
+
+    @Test
+    void aPreparedProxyIsPointedAtReapply() throws IOException {
+        CloudLayout layout = new CloudLayout(root);
+        layout.create();
+        Path proxy = layout.staticServices().resolve("Proxy-1");
+        Files.createDirectories(proxy);
+        Files.writeString(proxy.resolve(TemplatePreparer.PREPARED_MARKER), "");
+        Files.writeString(proxy.resolve(ForwardingCheck.VELOCITY_CONFIG), """
+                player-info-forwarding-mode = "NONE"
+                forwarding-secret-file = "forwarding.secret"
+                """);
+        Files.writeString(proxy.resolve("forwarding.secret"), "fremd\n");
+
+        List<Diagnostics.Finding> findings = new Doctor(layout,
+                () -> CloudConfig.defaults().withForwardingSecret("richtig"),
+                () -> List.of(),
+                () -> List.of(service("Proxy-1", ServiceType.PROXY, 25565)),
+                () -> "ok", () -> "ok").run();
+
+        assertTrue(has(findings, "Forwarding", "'service reapply Proxy-1'"),
+                "ein schon vorbereiteter Ordner braucht reapply statt Neustart: " + findings);
+    }
+
+    @Test
+    void aMissingProxyGroupIsAnError() {
+        CloudLayout layout = new CloudLayout(root);
+        Doctor doctor = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(serverGroup("Lobby", true)),
+                () -> List.of(), () -> "ok", () -> "ok");
+
+        List<Diagnostics.Finding> findings = doctor.run();
+
+        assertTrue(has(findings, "Gruppen", "keine Proxy-Gruppe"), findings.toString());
+        assertTrue(has(findings, "Gruppen", "--type PROXY"), findings.toString());
+    }
+
+    @Test
+    void aBackendWithoutFallbackIsReportedWithItsGroupName() {
+        CloudLayout layout = new CloudLayout(root);
+        Doctor doctor = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(proxyGroup(), serverGroup("Lobby", false)),
+                () -> List.of(), () -> "ok", () -> "ok");
+
+        List<Diagnostics.Finding> findings = doctor.run();
+
+        assertTrue(has(findings, "Gruppen", "kein Fallback-Ziel"), findings.toString());
+        assertTrue(has(findings, "Gruppen", "group edit Lobby --fallback"), findings.toString());
+        assertFalse(has(findings, "Gruppen", "keine Proxy-Gruppe"), findings.toString());
+    }
+
+    @Test
+    void aServerGroupWithoutAPeerIsReported() {
+        CloudLayout layout = new CloudLayout(root);
+        Doctor doctor = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(proxyGroup()),
+                () -> List.of(), () -> "ok", () -> "ok");
+
+        List<Diagnostics.Finding> findings = doctor.run();
+
+        assertTrue(has(findings, "Gruppen", "keine Server-Gruppe"), findings.toString());
+    }
+
+    @Test
+    void anEmptyGroupListIsReported() {
+        CloudLayout layout = new CloudLayout(root);
+        Doctor doctor = new Doctor(layout, CloudConfig::defaults, () -> List.of(), () -> List.of(),
+                () -> "ok", () -> "ok");
+
+        List<Diagnostics.Finding> findings = doctor.run();
+
+        assertTrue(has(findings, "Gruppen", "keine Gruppen definiert"), findings.toString());
+    }
+
+    @Test
+    void aProxyAndAFallbackTargetAreReportedAsConfigured() {
+        CloudLayout layout = new CloudLayout(root);
+        Doctor doctor = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(proxyGroup(), serverGroup("Lobby", true)),
+                () -> List.of(), () -> "ok", () -> "ok");
+
+        List<Diagnostics.Finding> findings = doctor.run();
+
+        assertTrue(has(findings, "Gruppen", "Proxy 'Proxy', Fallback 'Lobby'"), findings.toString());
+    }
+
+    private static ServiceGroup proxyGroup() {
+        return ServiceGroup.newBuilder()
+                .setName("Proxy")
+                .setType(ServiceType.PROXY)
+                .setPlatform("velocity")
+                .build();
+    }
+
+    private static ServiceGroup serverGroup(String name, boolean fallback) {
+        return ServiceGroup.newBuilder()
+                .setName(name)
+                .setType(ServiceType.SERVER)
+                .setPlatform("paper")
+                .setFallback(fallback)
+                .build();
     }
 
     private static ServiceInfo service(String name, ServiceType type, int port) {
