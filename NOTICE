@@ -1,0 +1,34 @@
+ByteStorm
+Copyright 2026 mzcydev
+
+ByteStorm is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes third-party software. The components below are shipped with
+the distribution or loaded by it at runtime; each remains under the license of its
+own copyright holder, not under the Apache License 2.0. Where a component offers a
+choice of licenses, the choice is left to the recipient.
+
+  protobuf-java (Google LLC)                      BSD-3-Clause
+  Redisson (Redisson)                             Apache License 2.0
+  MongoDB Java Driver (MongoDB Inc.)              Apache License 2.0
+  Jackson (FasterXML LLC)                         Apache License 2.0
+  Jetty (Eclipse Foundation)                      EPL-2.0 or Apache License 2.0
+  Javalin (Javalin)                               Apache License 2.0
+  Netty (The Netty Project)                       Apache License 2.0
+  Kryo (Esoteric Software LLC)                    BSD-3-Clause
+  docker-java (docker-java)                       Apache License 2.0
+  JDA (Austin Keener, Michael Ritter)             Apache License 2.0
+  SLF4J (QOS.ch)                                  MIT
+  Logback (QOS.ch)                                EPL-1.0 or LGPL-2.1
+  JLine (JLine)                                   BSD-3-Clause
+  en2do (eu.koboo)                                as declared by the artifact
+
+Transitive dependencies carry their own license files inside their jars; those
+texts are authoritative for the respective library.
+
+Not part of this distribution: Paper, Velocity and BungeeCord are downloaded by
+the operator at runtime from their official sources, and this project compiles
+only against their API artifacts. The same applies to the PlaceholderAPI.
+
+Minecraft is a trademark of Mojang Synergies AB. This project is not affiliated
+with Mojang or Microsoft.

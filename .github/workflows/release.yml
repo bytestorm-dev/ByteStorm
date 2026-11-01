@@ -1,19 +1,20 @@
 name: Build und Release
 
-# Jeder Push auf den Hauptbranch baut das gesamte Projekt und veröffentlicht die
-# Distribution. Endet die Version in gradle.properties auf SNAPSHOT, entsteht ein
-# Beta-Release (GitHub-Prerelease), sonst ein öffentlicher Release.
+# Veröffentlicht nur auf einem Tag v<version>. Jeder Push und jeder Pull Request
+# läuft stattdessen durch ci.yml und veröffentlicht nichts — ein roter Commit
+# soll kein fehlgeschlagener Release sein. Endet die Version in gradle.properties
+# auf SNAPSHOT, entsteht ein Beta-Release (GitHub-Prerelease), sonst ein
+# öffentlicher Release; bei einem Tag müssen Tag und Version übereinstimmen.
 on:
   push:
-    branches:
-      - main
-      - master
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
   contents: write
 
-# Je Branch läuft nur ein Release; ein neuer Push bricht den laufenden Build nicht
+# Je Tag läuft nur ein Release; ein erneuter Lauf bricht den laufenden Build nicht
 # ab, damit nie ein halb hochgeladenes Release entsteht.
 concurrency:
   group: release-${{ github.ref }}
@@ -56,6 +57,20 @@ jobs:
               echo "title=ByteStorm $version" >> "$GITHUB_OUTPUT"
               ;;
           esac
+
+      # Ein Tag, der nicht zur Version passt, erzeugt sonst ein Release unter dem
+      # falschen Namen — oder überschreibt ein älteres.
+      - name: Tag gegen Version prüfen
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Tag $TAG passt nicht zu version=$VERSION in gradle.properties"
+            exit 1
+          fi
 
       - name: Alles bauen und testen
         run: ./gradlew build --stacktrace

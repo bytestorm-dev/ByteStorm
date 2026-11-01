@@ -39,7 +39,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Paper-Service an. Damit erscheint er in derselben Registry und kann später
  * dynamische Server registrieren sowie Fallback-Routing übernehmen.
  */
-@Plugin(id = "bytestorm-bridge", name = "ByteStormBridge", version = "1.0-SNAPSHOT",
+@Plugin(id = "bytestorm-bridge", name = "ByteStormBridge", version = "1.0.0",
         description = "Verbindet einen Velocity-Proxy mit der ByteStorm-Cloud.",
         authors = {"ByteStorm"})
 public final class VelocityBridgePlugin implements BridgePlatform {

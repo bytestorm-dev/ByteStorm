@@ -1,24 +1,45 @@
 # CI-Prüfungen
 
-Jeder Push auf `master` löst `.github/workflows/release.yml` aus. Der Workflow
-prüft und veröffentlicht in einem Lauf:
+Zwei Workflows, zwei Aufgaben:
 
-1. **Prüfen** — `./gradlew build --stacktrace` auf Temurin JDK 25 mit
-   Gradle-Cache. `build` umfasst `compileJava`, `check` und damit die
-   Unit-Tests aller Module, etwa `:core`, `:node`, `:controller`, `:cli`,
-   `:launcher` sowie Bridges, Proxy-Plugin und die Module unter `modules/`.
-   Ein einziger roter Test bricht den Lauf ab.
-2. **Veröffentlichen** — liest `version=` aus `gradle.properties` und legt einen
-   GitHub-Release an: mit `SNAPSHOT` als Beta (`prerelease=true`), sonst als
-   öffentlichen Release.
+| Workflow | Auslöser | Tut |
+|---|---|---|
+| `.github/workflows/ci.yml` | jeder Push auf `main`/`master`, jeder Pull Request | `./gradlew build --stacktrace`, **nichts** veröffentlichen |
+| `.github/workflows/release.yml` | nur Tag `v<version>`, oder manuell | bauen, testen, Zip packen, GitHub-Release anlegen |
+
+## Prüfen (`ci.yml`)
+
+Temurin JDK 25 mit Gradle-Cache. `build` umfasst `compileJava`, `check` und damit
+die Unit-Tests aller Module — `:core`, `:node`, `:controller`, `:cli`,
+`:launcher`, die Bridges, das Proxy-Plugin und die Module unter `modules/`.
+Ein einziger roter Test bricht den Lauf ab. Berechtigungen sind auf
+`contents: read` beschränkt; ein neuer Push auf denselben Branch bricht den
+vorherigen Lauf ab.
+
+## Veröffentlichen (`release.yml`)
+
+Läuft ausschließlich auf einem Tag `v<version>` (oder per `workflow_dispatch`)
+und verweigert den Lauf, wenn Tag und `version=` aus `gradle.properties` nicht
+zusammengepassen:
+
+```
+v1.0.0  ↔  version=1.0.0     → Release
+v1.0.0  ↔  version=1.0.1     → Abbruch mit ::error
+```
+
+Danach wird `bytestorm-<version>.zip` gebaut und als Release veröffentlicht;
+endet die Version auf `SNAPSHOT`, als Beta (`prerelease=true`), sonst als
+öffentlicher Release. Ein bereits vorhandener Release derselben Version wird
+aktualisiert statt abzubrechen.
 
 ## Lokal denselben Stand prüfen
 
 ```bash
 ./gradlew build
+./gradlew :launcher:distributionZip     # zusätzlich prüfen, dass das Zip entsteht
 ```
 
-Mehr braucht es nicht: Der Workflow ruft denselben Befehl ohne zusätzliche
+Mehr braucht es nicht: Der Workflow ruft dieselben Befehle ohne zusätzliche
 Flags auf.
 
 ## Läufe lesen

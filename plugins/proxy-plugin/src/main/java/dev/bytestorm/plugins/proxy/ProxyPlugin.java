@@ -60,7 +60,7 @@ import java.util.concurrent.TimeUnit;
  * dünner Client des REST-Moduls; es ersetzt die CLI, ohne deren interaktive
  * Ansichten ({@code watch}, {@code screen}).
  */
-@Plugin(id = "bytestorm-proxy", name = "ByteStormProxy", version = "1.0-SNAPSHOT",
+@Plugin(id = "bytestorm-proxy", name = "ByteStormProxy", version = "1.0.0",
         description = "Tablist, Wartungsmodus und Cloud-Kommandos, vollständig über JSON übersetzbar.",
         authors = {"ByteStorm"})
 public final class ProxyPlugin implements PluginControl {

@@ -1,0 +1,39 @@
+name: Build und Tests
+
+# Prüft jeden Push und jeden Pull Request. Bewusst getrennt vom Release-Workflow:
+# Ein roter Commit soll kein fehlgeschlagener Release sein, und ein PR braucht
+# dieselbe Prüfung, ohne dass etwas veröffentlicht wird.
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+# Ein neuer Push auf denselben Branch bricht den alten Lauf ab; bei PRs zählt das
+# Ergebnis des letzten Commits.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Bauen und testen
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      # Gradle läuft auf JDK 25; die Toolchain (JDK 26) lädt Gradle selbst nach.
+      - name: JDK einrichten
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Bauen und testen
+        run: ./gradlew build --stacktrace
