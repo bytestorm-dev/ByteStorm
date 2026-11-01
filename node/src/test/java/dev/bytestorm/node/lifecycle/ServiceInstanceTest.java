@@ -4,6 +4,7 @@ import dev.bytestorm.api.service.LaunchOptions;
 import dev.bytestorm.api.service.ServiceHandle;
 import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.core.config.RedisSettings;
+import dev.bytestorm.node.runtime.AdoptableRuntime;
 import dev.bytestorm.node.runtime.PortLease;
 import dev.bytestorm.node.runtime.ServiceLaunch;
 import dev.bytestorm.node.runtime.ServiceRuntime;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -55,6 +57,27 @@ class ServiceInstanceTest {
         assertEquals(List.of(ServiceState.STOPPED, ServiceState.PREPARING),
                 events.stream().map(ServiceStateChanged::getPrevious).toList());
         assertFalse(leases.get(0).released());
+    }
+
+    @Test
+    void adoptTakesOverARunningProcessWithoutPreparingIt() throws Exception {
+        ServiceInstance instance = instance(ServiceMode.STATIC, false);
+        // Den Eintrag schreibt der Start; bei einer Übernahme liegt er schon da.
+        new ServicePid(ServiceId.random().toString(), "Lobby-1", "Lobby", 30002, 4242L,
+                RuntimeType.PROCESS, 0L, temp.resolve("server.jar").toString(), "")
+                .write(temp.resolve("service"));
+        PortLease lease = PortLease.of(30002, releasedPorts::add);
+
+        var info = instance.adopt(lease, 4242L);
+
+        assertEquals(ServiceState.STARTING, info.getState());
+        assertEquals(30002, info.getPort());
+        assertEquals(0, preparer.prepared, "ein laufender Prozess wird nicht erneut vorbereitet");
+        assertEquals(4242L, runtime.pid);
+        assertEquals(ServiceState.ONLINE, instance.online().getState(),
+                "erst der Bridge-Handshake macht den übernommenen Service ONLINE");
+        assertTrue(Files.isRegularFile(ServicePid.fileIn(temp.resolve("service"))),
+                "der übernommene Prozess behält seinen PID-Eintrag");
     }
 
     @Test
@@ -265,7 +288,10 @@ class ServiceInstanceTest {
         }
     }
 
-    private static final class FakeRuntime implements ServiceRuntime, dev.bytestorm.node.runtime.ExitAware {
+    private static final class FakeRuntime implements ServiceRuntime, AdoptableRuntime,
+            dev.bytestorm.node.runtime.ExitAware {
+
+        private long pid = 4242;
 
         private ServiceLaunch launch;
         private boolean alive;
@@ -281,6 +307,15 @@ class ServiceInstanceTest {
                 throw new ServiceRuntimeException(RuntimeType.PROCESS, "kaputt");
             }
             this.launch = launch;
+            this.alive = true;
+            this.exit = new java.util.concurrent.CompletableFuture<>();
+            return new FakeHandle(launch.id(), launch.directory(), this);
+        }
+
+        @Override
+        public ServiceHandle adopt(ServiceLaunch launch, long pid) {
+            this.launch = launch;
+            this.pid = pid;
             this.alive = true;
             this.exit = new java.util.concurrent.CompletableFuture<>();
             return new FakeHandle(launch.id(), launch.directory(), this);
@@ -330,7 +365,7 @@ class ServiceInstanceTest {
 
         @Override
         public String nativeId() {
-            return "fake";
+            return Long.toString(runtime.pid);
         }
 
         @Override

@@ -5,6 +5,7 @@ import dev.bytestorm.node.crash.CrashBudget;
 import dev.bytestorm.node.crash.CrashInfo;
 import dev.bytestorm.node.crash.CrashSupport;
 import dev.bytestorm.node.crash.ServiceCrashSupervisor;
+import dev.bytestorm.node.runtime.PortLease;
 import dev.bytestorm.node.runtime.ServiceRuntime;
 import dev.bytestorm.proto.GroupHealthChanged;
 import dev.bytestorm.proto.GroupState;
@@ -146,34 +147,42 @@ public final class ServiceManager implements AutoCloseable {
      * @throws IllegalStateException     wenn ID oder Name bereits vergeben sind
      */
     public synchronized ServiceInfo start(ServiceDefinition definition) throws ServiceLifecycleException {
-        Objects.requireNonNull(definition, "definition");
-        if (services.containsKey(definition.id()) || names.containsKey(definition.name())) {
-            throw new IllegalStateException("Service '" + definition.name() + "' ist bereits registriert");
-        }
-
-        ServiceRuntime runtime = Objects.requireNonNull(runtimes.runtimeFor(definition.group()),
-                "runtime für " + definition.group().getName());
-        ServiceInstance instance = new ServiceInstance(definition, runtime,
-                () -> ports.acquire(definition.group(), definition.name()),
-                preparer, stateEvents);
-        ServiceCrashSupervisor supervisor = new ServiceCrashSupervisor(instance,
-                crashes.settings(), crashes.reports(),
-                event -> recordCrash(definition.id(), event),
-                crashes.scheduler(), group -> {
-            degradedGroups.add(group);
-            publishGroupHealth(group, GroupState.DEGRADED, definition.name(), reasonOf(definition.id()));
-            crashes.degraded().accept(group);
-        });
-
-        services.put(definition.id(), supervisor);
-        names.put(definition.name(), definition.id());
+        ServiceCrashSupervisor supervisor = register(definition);
         try {
             ServiceInfo info = supervisor.start();
             clearDegraded(definition.group().getName());
             return info;
         } catch (ServiceLifecycleException | RuntimeException e) {
-            services.remove(definition.id());
-            names.remove(definition.name());
+            unregister(definition);
+            throw e;
+        }
+    }
+
+    /**
+     * Übernimmt einen Prozess, der einen Cloud-Neustart überlebt hat (§5.1, §7.1).
+     *
+     * <p>Der Service landet unter seiner alten ID und seinem alten Namen in der
+     * Registry — nur so akzeptiert der {@link dev.bytestorm.node.bridge.BridgeRegistrar}
+     * den Handshake seiner Bridge. Bis dahin steht er in {@code STARTING} und
+     * belegt damit einen Platz in der Skalierung.
+     *
+     * @param definition Service, wie er im Service-Ordner läuft
+     * @param lease      Port-Lease des laufenden Prozesses
+     * @param pid        Prozess-ID aus dem PID-Eintrag
+     * @return der Service im Zustand {@code STARTING}
+     * @throws ServiceLifecycleException wenn der Prozess fehlt oder die Runtime ihn nicht übernehmen kann
+     * @throws IllegalStateException     wenn ID oder Name bereits vergeben sind
+     */
+    public ServiceInfo adopt(ServiceDefinition definition, PortLease lease, long pid)
+            throws ServiceLifecycleException {
+        Objects.requireNonNull(lease, "lease");
+        ServiceCrashSupervisor supervisor = register(definition);
+        try {
+            ServiceInfo info = supervisor.adopt(lease, pid);
+            clearDegraded(definition.group().getName());
+            return info;
+        } catch (ServiceLifecycleException | RuntimeException e) {
+            unregister(definition);
             throw e;
         }
     }
@@ -488,6 +497,37 @@ public final class ServiceManager implements AutoCloseable {
             heartbeats.clear();
             lastCrashes.clear();
         }
+    }
+
+    private synchronized ServiceCrashSupervisor register(ServiceDefinition definition) {
+        Objects.requireNonNull(definition, "definition");
+        if (services.containsKey(definition.id()) || names.containsKey(definition.name())) {
+            throw new IllegalStateException("Service '" + definition.name() + "' ist bereits registriert");
+        }
+
+        ServiceRuntime runtime = Objects.requireNonNull(runtimes.runtimeFor(definition.group()),
+                "runtime für " + definition.group().getName());
+        ServiceInstance instance = new ServiceInstance(definition, runtime,
+                () -> ports.acquire(definition.group(), definition.name()),
+                preparer, stateEvents);
+        ServiceCrashSupervisor supervisor = new ServiceCrashSupervisor(instance,
+                crashes.settings(), crashes.reports(),
+                event -> recordCrash(definition.id(), event),
+                crashes.scheduler(), group -> {
+            degradedGroups.add(group);
+            publishGroupHealth(group, GroupState.DEGRADED, definition.name(), reasonOf(definition.id()));
+            crashes.degraded().accept(group);
+        });
+
+        services.put(definition.id(), supervisor);
+        names.put(definition.name(), definition.id());
+        return supervisor;
+    }
+
+    private synchronized void unregister(ServiceDefinition definition) {
+        services.remove(definition.id());
+        names.remove(definition.name());
+        heartbeats.remove(definition.id());
     }
 
     private void clearDegraded(String group) {

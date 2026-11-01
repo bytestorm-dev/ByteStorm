@@ -1,6 +1,7 @@
 package dev.bytestorm.node.lifecycle;
 
 import dev.bytestorm.api.service.ServiceHandle;
+import dev.bytestorm.node.runtime.AdoptableRuntime;
 import dev.bytestorm.node.runtime.CommandAware;
 import dev.bytestorm.node.runtime.ExitAware;
 import dev.bytestorm.node.runtime.PortLease;
@@ -126,12 +127,10 @@ public final class ServiceInstance {
             // Vor der Vorbereitung, damit %PORT% bereits im Template steht.
             lease = Objects.requireNonNull(ports.get(), "Port-Lease");
             preparer.prepare(definition, lease.port());
-            ServiceLaunch launch = new ServiceLaunch(definition.id(), definition.name(), lease,
-                    definition.directory(), definition.platformJar(), definition.bridgeJar(),
-                    definition.options(), definition.redis());
-            handle = runtime.start(launch);
+            handle = runtime.start(launch(lease));
             port = lease;
             transition(ServiceState.STARTING);
+            writePidFile();
             watchExit(handle);
             return info;
         } catch (IOException | RuntimeException e) {
@@ -141,6 +140,46 @@ public final class ServiceInstance {
             transition(ServiceState.STOPPED);
             throw new ServiceLifecycleException("Service '" + definition.name()
                     + "' konnte nicht gestartet werden: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Übernimmt einen Prozess, der einen Cloud-Neustart überlebt hat (§5.1, §7.1).
+     *
+     * <p>Vorbereitung und Port-Vergabe entfallen: Ordner, Templates und Listener
+     * gehören bereits dem laufenden Prozess. Der Service geht in {@code STARTING}
+     * und wird {@code ONLINE}, sobald seine Bridge sich wieder meldet.
+     *
+     * @param lease Port-Lease des laufenden Prozesses
+     * @param pid   Prozess-ID aus dem PID-Eintrag
+     * @return der Service im Zustand {@code STARTING}
+     * @throws ServiceLifecycleException wenn die Runtime den Prozess nicht übernehmen kann
+     */
+    public synchronized ServiceInfo adopt(PortLease lease, long pid) throws ServiceLifecycleException {
+        Objects.requireNonNull(lease, "lease");
+        if (handle != null && handle.isAlive()) {
+            throw new IllegalStateException("Service '" + definition.name() + "' läuft bereits");
+        }
+        if (!(runtime instanceof AdoptableRuntime adoptable)) {
+            lease.close();
+            throw new ServiceLifecycleException("Runtime " + definition.options().runtime()
+                    + " von '" + definition.name() + "' kann keinen laufenden Prozess übernehmen");
+        }
+
+        transition(ServiceState.PREPARING);
+        try {
+            ServiceHandle adopted = adoptable.adopt(launch(lease), pid);
+            port = lease;
+            handle = adopted;
+            transition(ServiceState.STARTING);
+            watchExit(adopted);
+            return info;
+        } catch (RuntimeException e) {
+            lease.close();
+            port = null;
+            transition(ServiceState.STOPPED);
+            throw new ServiceLifecycleException("Service '" + definition.name()
+                    + "' konnte nicht übernommen werden: " + e.getMessage(), e);
         }
     }
 
@@ -229,6 +268,7 @@ public final class ServiceInstance {
                             definition.name(), handle.nativeId(), port.port());
                 }
             }
+            forgetPidFileIfGone();
             cleanup();
             transition(ServiceState.STOPPED);
         }
@@ -277,6 +317,7 @@ public final class ServiceInstance {
                         definition.name(), reason, e.toString());
             }
         }
+        forgetPidFileIfGone();
         return Optional.of(new ServiceExit(crashed, definition.directory(), -1, reason, tail));
     }
 
@@ -289,6 +330,7 @@ public final class ServiceInstance {
         if (port != null) {
             port.close();
         }
+        forgetPidFileIfGone();
         transition(ServiceState.CRASHED);
         return info;
     }
@@ -383,6 +425,39 @@ public final class ServiceInstance {
                 log.warn("Crash von '{}' konnte nicht verarbeitet werden: {}", definition.name(), e.toString());
             }
         }
+    }
+
+    private ServiceLaunch launch(PortLease lease) {
+        return new ServiceLaunch(definition.id(), definition.name(), lease,
+                definition.directory(), definition.platformJar(), definition.bridgeJar(),
+                definition.options(), definition.redis());
+    }
+
+    /**
+     * hält fest, welcher Prozess in diesem Ordner läuft. Nur Runtimes, die einen
+     * Prozess übernehmen können, brauchen diesen Eintrag.
+     */
+    private void writePidFile() {
+        if (!(runtime instanceof AdoptableRuntime) || handle == null) {
+            return;
+        }
+        try {
+            ServicePid.of(definition, port == null ? 0 : port.port(), handle.nativeId())
+                    .write(definition.directory());
+        } catch (IOException | RuntimeException e) {
+            log.warn("PID-Eintrag für '{}' nicht geschrieben: {}", definition.name(), e.getMessage());
+        }
+    }
+
+    /**
+     * Entfernt den PID-Eintrag nur, wenn der Prozess wirklich weg ist. Ein
+     * überlebender Prozess behält ihn: Der nächste Start soll ihn wiederfinden.
+     */
+    private void forgetPidFileIfGone() {
+        if (handle != null && handle.isAlive()) {
+            return;
+        }
+        ServicePid.delete(definition.directory());
     }
 
     private void cleanup() {

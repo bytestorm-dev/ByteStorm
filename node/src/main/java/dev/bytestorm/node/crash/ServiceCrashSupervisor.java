@@ -4,6 +4,7 @@ import dev.bytestorm.core.config.CrashSettings;
 import dev.bytestorm.node.lifecycle.ServiceExit;
 import dev.bytestorm.node.lifecycle.ServiceInstance;
 import dev.bytestorm.node.lifecycle.ServiceLifecycleException;
+import dev.bytestorm.node.runtime.PortLease;
 import dev.bytestorm.proto.ServiceCrashed;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceState;
@@ -107,6 +108,30 @@ public final class ServiceCrashSupervisor {
     public ServiceInfo start() throws ServiceLifecycleException {
         crashes.policy().reset();
         return startInstance();
+    }
+
+    /**
+     * Übernimmt einen Service, dessen Prozess einen Cloud-Neustart überlebt hat.
+     *
+     * <p>Die Frist bis {@code ONLINE} gilt auch hier: Meldet sich seine Bridge
+     * nicht, wird der Prozess beendet und läuft durch die Crash-Kette — besser
+     * als ein für immer hängender {@code STARTING}-Service, den niemand mehr
+     * erreicht.
+     *
+     * @param lease Port-Lease des laufenden Prozesses
+     * @param pid   Prozess-ID
+     * @return der Service im Zustand {@code STARTING}
+     * @throws ServiceLifecycleException wenn der Prozess nicht übernommen werden kann
+     */
+    public ServiceInfo adopt(PortLease lease, long pid) throws ServiceLifecycleException {
+        long token = generation.incrementAndGet();
+        ServiceInfo info = instance.adopt(lease, pid);
+        scheduler.schedule(() -> {
+            if (generation.get() == token) {
+                instance.startTimedOut().ifPresent(this::onExit);
+            }
+        }, startTimeout);
+        return info;
     }
 
     /**

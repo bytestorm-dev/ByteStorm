@@ -17,11 +17,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 /**
@@ -35,8 +39,13 @@ import java.util.function.Function;
  *
  * <p>Konsolenbefehle laufen über {@link #sendCommand}; der Stopp-Befehl wird von
  * {@link #stop} gesendet, bevor nach Ablauf der Frist hart gekillt wird.
+ *
+ * <p>Über {@link #adopt} kann ein Prozess übernommen werden, der einen
+ * Cloud-Neustart überlebt hat. Dessen stdin/stdout hingen am vorherigen
+ * Cloud-Prozess: Konsolenbefehle sind dann nicht mehr zustellbar und die Logs
+ * bleiben auf dem Stand des Absturzes.
  */
-public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandAware {
+public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandAware, AdoptableRuntime {
 
     private static final Logger log = LoggerFactory.getLogger(ProcessRuntime.class);
 
@@ -45,6 +54,9 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
 
     /** Frist, in der nach dem Exit noch Restausgaben gelesen werden. */
     private static final Duration DRAIN_TIMEOUT = Duration.ofSeconds(2);
+
+    /** Name der Logdatei je Service, wie sie {@link ServiceLogs} schreibt. */
+    private static final String LATEST_LOG = "latest.log";
 
     private final Path logRoot;
     private final Function<String, LogPublisher> publishers;
@@ -103,7 +115,7 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
 
             logs = new ServiceLogs(launch.name(), logDirectory, ringSize, publisher);
             Process process = builder.start();
-            HandleImpl handle = new HandleImpl(launch, process, logs);
+            LiveProcess handle = new LiveProcess(launch, process, logs);
             handle.watchExit();
             handle.startReaders();
             log.info("Service '{}' gestartet (PID {}, Runtime {})", launch.name(), process.pid(), RuntimeType.PROCESS);
@@ -123,67 +135,54 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
     }
 
     @Override
+    public ServiceHandle adopt(ServiceLaunch launch, long pid) {
+        Objects.requireNonNull(launch, "launch");
+        ProcessHandle process = ProcessHandle.of(pid)
+                .filter(ProcessHandle::isAlive)
+                .orElseThrow(() -> new ServiceRuntimeException(RuntimeType.PROCESS,
+                        "Prozess " + pid + " von '" + launch.name() + "' läuft nicht mehr"));
+        AdoptedProcess handle = new AdoptedProcess(launch, process);
+        handle.watchExit();
+        log.warn("Service '{}' übernommen (PID {}): Konsole und Log-Weiterleitung fehlen bis zum Neustart, "
+                + "weil sie am vorherigen Cloud-Prozess hingen", launch.name(), pid);
+        return handle;
+    }
+
+    @Override
     public void stop(ServiceHandle handle, Duration timeout) {
-        HandleImpl running = require(handle);
+        Running running = require(handle);
         Objects.requireNonNull(timeout, "timeout");
         if (timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("timeout muss positiv sein: " + timeout);
         }
-        if (!running.process.isAlive()) {
+        if (!running.isAlive()) {
             return;
         }
-
-        try {
-            running.sendCommand("stop");
-        } catch (ServiceRuntimeException e) {
-            log.debug("Stopp-Befehl für '{}' nicht zustellbar: {}", running.launch.name(), e.getMessage());
-        }
-        try {
-            if (running.process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-                return;
-            }
-            log.warn("Service '{}' hat nicht innerhalb von {} gestoppt — wird gekillt", running.launch.name(), timeout);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        kill(running);
+        running.stopGracefully(timeout);
     }
 
     @Override
     public void kill(ServiceHandle handle) {
-        HandleImpl running = require(handle);
-        if (!running.process.isAlive()) {
+        Running running = require(handle);
+        if (!running.isAlive()) {
             return;
         }
-        running.process.destroyForcibly();
-        try {
-            running.process.waitFor(KILL_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        if (running.process.isAlive()) {
-            // Der Port bleibt dann belegt; ohne diese Meldung sucht der Betreiber
-            // den Grund beim Port-Pool statt beim Prozess.
-            log.error("Service '{}' läuft nach dem Kill weiter (PID {}) — der Port bleibt belegt",
-                    running.launch.name(), running.process.pid());
-            return;
-        }
-        log.info("Service '{}' gekillt", running.launch.name());
+        running.killNow();
     }
 
     @Override
     public boolean isAlive(ServiceHandle handle) {
-        return require(handle).process.isAlive();
+        return require(handle).isAlive();
     }
 
     @Override
     public List<String> logs(ServiceHandle handle) {
-        return require(handle).logs.snapshot();
+        return require(handle).logs();
     }
 
     @Override
     public CompletableFuture<Integer> onExit(ServiceHandle handle) {
-        return require(handle).exit;
+        return require(handle).onExitFuture();
     }
 
     /**
@@ -195,30 +194,44 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
      */
     @Override
     public void sendCommand(ServiceHandle handle, String command) {
-        require(handle).sendCommand(command);
+        require(handle).writeCommand(command);
     }
 
-    private HandleImpl require(ServiceHandle handle) {
-        if (!(handle instanceof ProcessRuntime.HandleImpl running)) {
+    private Running require(ServiceHandle handle) {
+        if (!(handle instanceof Running running)) {
             throw new IllegalArgumentException("Handle gehört nicht zur ProcessRuntime: " + handle);
         }
         return running;
     }
 
-    private final class HandleImpl implements ServiceHandle {
+    /** Gemeinsame Sicht auf selbst gestartete und übernommene Prozesse. */
+    private interface Running extends ServiceHandle {
+
+        List<String> logs();
+
+        CompletableFuture<Integer> onExitFuture();
+
+        void stopGracefully(Duration timeout);
+
+        void killNow();
+
+        void writeCommand(String command);
+    }
+
+    private final class LiveProcess implements Running {
 
         private final ServiceLaunch launch;
         private final Process process;
-        private final ServiceLogs logs;
+        private final ServiceLogs output;
         private final BufferedWriter stdin;
         private final CountDownLatch readers = new CountDownLatch(2);
         private final CompletableFuture<Integer> exit = new CompletableFuture<>();
         private boolean stdinClosed;
 
-        private HandleImpl(ServiceLaunch launch, Process process, ServiceLogs logs) {
+        private LiveProcess(ServiceLaunch launch, Process process, ServiceLogs output) {
             this.launch = launch;
             this.process = process;
-            this.logs = logs;
+            this.output = output;
             this.stdin = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
         }
 
@@ -237,7 +250,7 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    logs.accept(channel, line);
+                    output.accept(channel, line);
                 }
             } catch (IOException | RuntimeException e) {
                 if (process.isAlive()) {
@@ -254,7 +267,7 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
                     .start(() -> {
                         process.onExit().join();
                         awaitReaders();
-                        logs.close();
+                        output.close();
                         closeStdin();
                         launch.port().close();
                         int exitCode = process.exitValue();
@@ -273,7 +286,44 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
             }
         }
 
-        private synchronized void sendCommand(String command) {
+        @Override
+        public void stopGracefully(Duration timeout) {
+            try {
+                writeCommand("stop");
+            } catch (ServiceRuntimeException e) {
+                log.debug("Stopp-Befehl für '{}' nicht zustellbar: {}", launch.name(), e.getMessage());
+            }
+            try {
+                if (process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+                log.warn("Service '{}' hat nicht innerhalb von {} gestoppt — wird gekillt", launch.name(), timeout);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            killNow();
+        }
+
+        @Override
+        public void killNow() {
+            process.destroyForcibly();
+            try {
+                process.waitFor(KILL_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            if (process.isAlive()) {
+                // Der Port bleibt dann belegt; ohne diese Meldung sucht der Betreiber
+                // den Grund beim Port-Pool statt beim Prozess.
+                log.error("Service '{}' läuft nach dem Kill weiter (PID {}) — der Port bleibt belegt",
+                        launch.name(), process.pid());
+                return;
+            }
+            log.info("Service '{}' gekillt", launch.name());
+        }
+
+        @Override
+        public void writeCommand(String command) {
             Objects.requireNonNull(command, "command");
             if (command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0) {
                 throw new IllegalArgumentException("Konsolenbefehl darf kein Zeilenende enthalten: " + command);
@@ -282,13 +332,15 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
                 throw new ServiceRuntimeException(RuntimeType.PROCESS,
                         "Service '" + launch.name() + "' läuft nicht mehr");
             }
-            try {
-                stdin.write(command);
-                stdin.write(System.lineSeparator());
-                stdin.flush();
-            } catch (IOException e) {
-                throw new ServiceRuntimeException(RuntimeType.PROCESS,
-                        "Konsole von '" + launch.name() + "' nicht erreichbar: " + e.getMessage(), e);
+            synchronized (this) {
+                try {
+                    stdin.write(command);
+                    stdin.write(System.lineSeparator());
+                    stdin.flush();
+                } catch (IOException e) {
+                    throw new ServiceRuntimeException(RuntimeType.PROCESS,
+                            "Konsole von '" + launch.name() + "' nicht erreichbar: " + e.getMessage(), e);
+                }
             }
         }
 
@@ -302,6 +354,16 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
             } catch (IOException e) {
                 // Prozess ist beendet; der Writer ist dann ohnehin unbrauchbar.
             }
+        }
+
+        @Override
+        public List<String> logs() {
+            return output.snapshot();
+        }
+
+        @Override
+        public CompletableFuture<Integer> onExitFuture() {
+            return exit;
         }
 
         @Override
@@ -323,5 +385,130 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
         public boolean isAlive() {
             return process.isAlive();
         }
+    }
+
+    /**
+     * Prozess aus einem früheren Cloud-Lauf. Keine Pipes: {@code stdin} und
+     * {@code stdout} gehörten dem beendeten Cloud-Prozess.
+     */
+    private final class AdoptedProcess implements Running {
+
+        private final ServiceLaunch launch;
+        private final ProcessHandle process;
+        private final CompletableFuture<Integer> exit = new CompletableFuture<>();
+
+        private AdoptedProcess(ServiceLaunch launch, ProcessHandle process) {
+            this.launch = launch;
+            this.process = process;
+        }
+
+        private void watchExit() {
+            Thread.ofVirtual()
+                    .name("bytestorm-" + launch.name() + "-reaper")
+                    .start(() -> {
+                        process.onExit().join();
+                        launch.port().close();
+                        // Der Exit-Code eines fremden Prozesses ist nicht abrufbar.
+                        exit.complete(-1);
+                        log.info("Service '{}' beendet (Exit unbekannt, Prozess war übernommen)", launch.name());
+                    });
+        }
+
+        @Override
+        public List<String> logs() {
+            // Nur der Stand bis zum Cloud-Absturz; die Pipes von damals existieren nicht mehr.
+            return tail(logRoot.resolve(launch.name()).resolve(LATEST_LOG), ringSize);
+        }
+
+        @Override
+        public CompletableFuture<Integer> onExitFuture() {
+            return exit;
+        }
+
+        @Override
+        public void stopGracefully(Duration timeout) {
+            // Ohne stdin gibt es kein "stop": warten, dann hart beenden.
+            try {
+                process.onExit().get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (ExecutionException e) {
+                return;
+            } catch (TimeoutException e) {
+                log.warn("Service '{}' hat nicht innerhalb von {} gestoppt — wird gekillt", launch.name(), timeout);
+            }
+            killNow();
+        }
+
+        @Override
+        public void killNow() {
+            process.destroyForcibly();
+            try {
+                process.onExit().get(KILL_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (ExecutionException | TimeoutException e) {
+                if (process.isAlive()) {
+                    log.error("Service '{}' läuft nach dem Kill weiter (PID {}) — der Port bleibt belegt",
+                            launch.name(), process.pid());
+                    return;
+                }
+            }
+            log.info("Service '{}' gekillt", launch.name());
+        }
+
+        @Override
+        public void writeCommand(String command) {
+            throw new ServiceRuntimeException(RuntimeType.PROCESS,
+                    "Konsole von '" + launch.name() + "' ist nach einer Übernahme nicht mehr erreichbar");
+        }
+
+        @Override
+        public ServiceId id() {
+            return launch.id();
+        }
+
+        @Override
+        public String nativeId() {
+            return Long.toString(process.pid());
+        }
+
+        @Override
+        public Path directory() {
+            return launch.directory();
+        }
+
+        @Override
+        public boolean isAlive() {
+            return process.isAlive();
+        }
+    }
+
+    /**
+     * Liest die letzten Zeilen einer Logdatei, ohne sie ganz im Speicher zu halten.
+     *
+     * @param file  Logdatei
+     * @param lines maximale Zeilenzahl
+     * @return die letzten Zeilen, älteste zuerst
+     */
+    private static List<String> tail(Path file, int lines) {
+        if (!Files.isRegularFile(file)) {
+            return List.of();
+        }
+        Deque<String> ring = new ArrayDeque<>(lines);
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                ring.addLast(line);
+                while (ring.size() > lines) {
+                    ring.removeFirst();
+                }
+            }
+        } catch (IOException e) {
+            log.debug("Logdatei {} nicht lesbar: {}", file, e.toString());
+            return List.of();
+        }
+        return List.copyOf(ring);
     }
 }

@@ -51,6 +51,7 @@ import dev.bytestorm.launcher.layout.DefaultTemplates;
 import dev.bytestorm.launcher.layout.ServiceDirectories;
 import dev.bytestorm.launcher.luckperms.LuckPermsInstaller;
 import dev.bytestorm.launcher.platform.PlatformDownloader;
+import dev.bytestorm.launcher.recovery.ServiceRecovery;
 import dev.bytestorm.launcher.scaling.ServiceProvisioner;
 import dev.bytestorm.launcher.update.UpdateNotifier;
 import dev.bytestorm.launcher.wizard.DefaultConnectionTester;
@@ -87,6 +88,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -204,6 +206,11 @@ public final class Bootstrap implements AutoCloseable {
             log.info("Forwarding-Secret aus {} übernommen", CONFIG_FILE);
         }
 
+        if (config.redis().password() == null) {
+            log.warn("Redis ohne Passwort ({}): wer im selben Netz sitzt, kann den Live-Zustand lesen "
+                    + "und verändern — 'redis.password' in {} setzen", config.redis().address(), CONFIG_FILE);
+        }
+
         ShutdownCoordinator shutdown = new ShutdownCoordinator();
         try {
             // Registrierung in Startreihenfolge — der Coordinator dreht sie um.
@@ -227,9 +234,21 @@ public final class Bootstrap implements AutoCloseable {
             shutdown.registerCloseable("players", players);
             log.info("Spieler-Registry bereit");
 
-            ServiceManager services = nodeServices(config, layout, core);
+            ProcessRuntime processRuntime = new ProcessRuntime(layout.logs(), core.logs());
+            ServiceManager services = nodeServices(config, layout, core, processRuntime);
             shutdown.registerCloseable("services", services);
-            reconcile(layout, core);
+            // Gruppe-Quelle für CLI, Provisioner und Scaling; ein Pfad mit Validierung und Cache.
+            // Vor dem Abgleich angelegt: Ein übernommener Prozess braucht seine Gruppe.
+            GroupManager groups = new GroupManager(new GroupRepository(mongo), core.groups(),
+                    config.ports(), name -> Files.isDirectory(layout.templates().resolve(name)));
+            // Prozesse aus einem früheren Lauf: übernehmen oder aufräumen, bevor die Registry
+            // geleert wird — sonst hätten sie keinen Namen, keinen Port und keinen Heartbeat.
+            ServiceRecovery.Report recovered = new ServiceRecovery(layout, groups::get, config.redis(),
+                    core.ports()::release, services).run();
+            if (!recovered.isEmpty()) {
+                log.info("Laufende Prozesse aus einem früheren Start: {}", recovered.describe());
+            }
+            reconcile(layout, core, recovered.adoptedIds(), recovered.adoptedPorts());
             // Nach dem Manager registriert: Handshake/Heartbeat enden vor dem Stop der Services.
             BridgeRegistrar bridgeRegistrar = new BridgeRegistrar(redis.client(), services, core.services());
             bridgeRegistrar.start();
@@ -239,9 +258,6 @@ public final class Bootstrap implements AutoCloseable {
             // Lesen über Redis (Quelle der Wahrheit), Schreiben über den Node (§7.1).
             ServiceRegistry serviceRegistry = ServiceRegistry.of(core.services(), services::all);
             ServiceController controller = new DefaultServiceController(services, serviceRegistry);
-            // Gruppe-Quelle für CLI, Provisioner und Scaling; ein Pfad mit Validierung und Cache.
-            GroupManager groups = new GroupManager(new GroupRepository(mongo), core.groups(),
-                    config.ports(), name -> Files.isDirectory(layout.templates().resolve(name)));
             ServiceProvisioner provisioner = provisioner(groups, services, core, layout, config);
             // Degradierte Gruppen bekommen keine neuen Services: die Skalierung kann den
             // Absturzgrund nicht beheben, sie würde nur endlos Nachschub starten.
@@ -471,10 +487,8 @@ public final class Bootstrap implements AutoCloseable {
      * {@code bs:services} Reste des vorherigen Laufs. Ohne diesen Schritt würde die
      * Registry verwaiste Services als {@code ONLINE} zeigen.
      */
-    private static void reconcile(CloudLayout layout, CoreServices core) {
-        // Kein Service bekannt: IDs und Ports bleiben leer, die lokalen Ordner zählen.
-        Set<String> knownIds = Set.of();
-        Set<Integer> knownPorts = Set.of();
+    private static void reconcile(CloudLayout layout, CoreServices core,
+                                  Collection<String> knownIds, Collection<Integer> knownPorts) {
         Set<String> existingNames;
         try {
             existingNames = ServiceDirectories.names(layout);
@@ -487,9 +501,9 @@ public final class Bootstrap implements AutoCloseable {
         log.info("Abgleich beim Start: {}", report.describe());
     }
 
-    private static ServiceManager nodeServices(CloudConfig config, CloudLayout layout, CoreServices core) {
-        RuntimeFactory runtimes = RuntimeFactory.of(
-                new ProcessRuntime(layout.logs(), core.logs()),
+    private static ServiceManager nodeServices(CloudConfig config, CloudLayout layout, CoreServices core,
+                                               ProcessRuntime processRuntime) {
+        RuntimeFactory runtimes = RuntimeFactory.of(processRuntime,
                 new DockerRuntime(layout.logs(), core.logs(), config.docker().host()));
         PortSettings ports = config.ports();
         // Der Proxy beginnt bei ports.proxy und weicht bis zum ersten Server-Port aus,
