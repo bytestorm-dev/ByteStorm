@@ -1,0 +1,8 @@
+{
+  "id": "bytestorm-proxy",
+  "name": "ByteStormProxy",
+  "version": "${version}",
+  "description": "Tablist, Wartungsmodus und weitere Proxy-Funktionen, vollständig über JSON übersetzbar.",
+  "authors": ["ByteStorm"],
+  "main": "dev.bytestorm.plugins.proxy.ProxyPlugin"
+}

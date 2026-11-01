@@ -7,6 +7,8 @@ import dev.bytestorm.api.event.Subscription;
 import dev.bytestorm.api.group.Groups;
 import dev.bytestorm.api.module.Modules;
 import dev.bytestorm.api.player.Players;
+import dev.bytestorm.api.service.CrashBudget;
+import dev.bytestorm.api.service.ServiceCrash;
 import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.api.service.Services;
 import dev.bytestorm.api.template.Templates;
@@ -306,6 +308,45 @@ public final class DefaultByteStormApi implements ByteStormApi, AutoCloseable {
                 controller.sendCommand(ServiceId.parse(requested), line);
                 return null;
             });
+        }
+
+        @Override
+        public CompletableFuture<Void> reapply(String serviceId) {
+            String requested = requireServiceId(serviceId);
+            return async(() -> {
+                controller.reapply(ServiceId.parse(requested));
+                return null;
+            });
+        }
+
+        @Override
+        public CompletableFuture<Void> online(String serviceId) {
+            String requested = requireServiceId(serviceId);
+            return async(() -> {
+                controller.online(ServiceId.parse(requested));
+                return null;
+            });
+        }
+
+        @Override
+        public List<String> logs(String serviceId) {
+            return List.copyOf(controller.logs(ServiceId.parse(requireServiceId(serviceId))));
+        }
+
+        @Override
+        public List<ServiceCrash> lastCrashes() {
+            return controller.lastCrashes().stream()
+                    .map(info -> new ServiceCrash(info.service(), info.reason(), info.exitCode(),
+                            info.time().toEpochMilli(), info.report().toString()))
+                    .toList();
+        }
+
+        @Override
+        public Map<String, CrashBudget> crashBudgets() {
+            Map<String, CrashBudget> budgets = new LinkedHashMap<>();
+            controller.crashBudgets().forEach((name, budget) ->
+                    budgets.put(name, new CrashBudget(budget.remaining(), budget.total())));
+            return Map.copyOf(budgets);
         }
     }
 

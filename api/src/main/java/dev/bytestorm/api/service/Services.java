@@ -100,4 +100,36 @@ public interface Services {
      * @return Future mit der Antwort des Bridges
      */
     CompletableFuture<Void> execute(String serviceId, String command);
+
+    /**
+     * Wendet die Templates eines Services erneut an (§10).
+     *
+     * @param serviceId Service-UUID
+     * @return Future, das nach dem Anwenden abgeschlossen ist
+     */
+    CompletableFuture<Void> reapply(String serviceId);
+
+    /**
+     * Meldet einen Service als {@code ONLINE} (§14).
+     *
+     * @param serviceId Service-UUID
+     * @return Future, das nach dem Vermerken abgeschlossen ist
+     */
+    CompletableFuture<Void> online(String serviceId);
+
+    /**
+     * @param serviceId Service-UUID
+     * @return die letzten Logzeilen des Services, leer wenn keine vorliegen
+     */
+    List<String> logs(String serviceId);
+
+    /**
+     * @return der letzte Absturz je Service, neueste zuerst
+     */
+    List<ServiceCrash> lastCrashes();
+
+    /**
+     * @return verbleibendes Absturz-Budget je Service-Name
+     */
+    Map<String, CrashBudget> crashBudgets();
 }

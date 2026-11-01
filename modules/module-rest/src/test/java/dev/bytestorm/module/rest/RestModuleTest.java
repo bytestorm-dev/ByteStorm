@@ -2,8 +2,14 @@ package dev.bytestorm.module.rest;
 
 import dev.bytestorm.api.ByteStormApi;
 import dev.bytestorm.api.CloudModule;
+import dev.bytestorm.api.group.Groups;
 import dev.bytestorm.api.module.ModuleContext;
+import dev.bytestorm.api.player.Players;
+import dev.bytestorm.api.service.CrashBudget;
+import dev.bytestorm.api.service.ServiceCrash;
 import dev.bytestorm.api.service.Services;
+import dev.bytestorm.proto.PlayerInfo;
+import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceState;
 import dev.bytestorm.proto.ServiceType;
@@ -21,12 +27,14 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,10 +50,16 @@ class RestModuleTest {
 
     private static final String PROXY_ID = "1e1f0dd4-0000-4000-8000-000000000002";
 
+    private static final String PLAYER_ID = "1e1f0dd4-0000-4000-8000-000000000003";
+
     @TempDir
     Path temp;
 
     private final FakeServices services = new FakeServices();
+
+    private final FakeGroups groups = new FakeGroups();
+
+    private final FakePlayers players = new FakePlayers();
 
     @Test
     void servicesAnswerWithAValidKeyAnd401Without() throws Exception {
@@ -260,12 +274,192 @@ class RestModuleTest {
         RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
         module.onEnable();
         try (HttpClient client = HttpClient.newHttpClient()) {
-            for (String path : List.of(RestModule.START_PATH, RestModule.STOP_PATH, RestModule.COMMAND_PATH)) {
+            for (String path : List.of(RestModule.START_PATH, RestModule.STOP_PATH,
+                    RestModule.COMMAND_PATH, RestModule.RESTART_PATH, RestModule.MAINTENANCE_PATH,
+                    RestModule.SCALE_PATH, RestModule.CONNECT_PATH, RestModule.KICK_PATH,
+                    RestModule.REAPPLY_PATH, RestModule.ONLINE_PATH)) {
                 HttpResponse<String> response = post(client, port, null, path, "{\"group\":\"Lobby\"}");
                 assertEquals(401, response.statusCode(), path);
                 assertTrue(response.body().contains("API-Key"), response.body());
             }
+            assertEquals(401, get(client, port, null, RestModule.GROUPS_PATH).statusCode());
+            assertEquals(401, get(client, port, null, RestModule.PLAYERS_PATH).statusCode());
             assertTrue(services.calls.isEmpty());
+            assertTrue(groups.calls.isEmpty());
+            assertTrue(players.calls.isEmpty());
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void restartGroupsAndPlayersReachTheCloud() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpResponse<String> restarted = post(client, port, KEY, RestModule.RESTART_PATH,
+                    "{\"id\":\"" + LOBBY_ID + "\"}");
+            assertEquals(200, restarted.statusCode(), restarted.body());
+            assertTrue(restarted.body().contains("\"restarted\":true"), restarted.body());
+
+            HttpResponse<String> definitions = get(client, port, KEY, RestModule.GROUPS_PATH);
+            assertEquals(200, definitions.statusCode(), definitions.body());
+            assertTrue(definitions.body().contains("\"groups\""), definitions.body());
+            assertTrue(definitions.body().contains("\"Lobby\""), definitions.body());
+            assertTrue(definitions.body().contains("\"services\":1"),
+                    "Lobby-1 zählt zu Lobby: " + definitions.body());
+            assertTrue(definitions.body().contains("\"maintenance\":true"),
+                    "Proxy steht in Wartung: " + definitions.body());
+
+            HttpResponse<String> maintenance = post(client, port, KEY, RestModule.MAINTENANCE_PATH,
+                    "{\"name\":\"Lobby\",\"enabled\":true}");
+            assertEquals(200, maintenance.statusCode(), maintenance.body());
+            assertTrue(maintenance.body().contains("\"maintenance\":true"), maintenance.body());
+
+            HttpResponse<String> scaled = post(client, port, KEY, RestModule.SCALE_PATH,
+                    "{\"name\":\"Lobby\",\"target\":3}");
+            assertEquals(200, scaled.statusCode(), scaled.body());
+            assertTrue(scaled.body().contains("\"target\":3"), scaled.body());
+
+            HttpResponse<String> online = get(client, port, KEY, RestModule.PLAYERS_PATH);
+            assertEquals(200, online.statusCode(), online.body());
+            assertTrue(online.body().contains("\"Notch\""), online.body());
+            assertTrue(online.body().contains("\"server\":\"Lobby-1\""), online.body());
+
+            HttpResponse<String> connected = post(client, port, KEY, RestModule.CONNECT_PATH,
+                    "{\"uuid\":\"" + PLAYER_ID + "\",\"service\":\"Lobby-1\"}");
+            assertEquals(200, connected.statusCode(), connected.body());
+
+            HttpResponse<String> kicked = post(client, port, KEY, RestModule.KICK_PATH,
+                    "{\"uuid\":\"" + PLAYER_ID + "\",\"reason\":\"Bitte Regeln lesen\"}");
+            assertEquals(200, kicked.statusCode(), kicked.body());
+            assertTrue(kicked.body().contains("\"kicked\":true"), kicked.body());
+
+            assertEquals(List.of("restart:" + LOBBY_ID), services.calls);
+            assertEquals(List.of("maintenance:Lobby:true", "scale:Lobby:3"), groups.calls);
+            assertEquals(List.of("connect:" + PLAYER_ID + ":Lobby-1",
+                    "kick:" + PLAYER_ID + ":Bitte Regeln lesen"), players.calls);
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void theNewRoutesRejectBrokenBodies() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            assertEquals(400, post(client, port, KEY, RestModule.RESTART_PATH, "{}").statusCode(),
+                    "id fehlt");
+            assertEquals(400, post(client, port, KEY, RestModule.MAINTENANCE_PATH,
+                    "{\"name\":\"Lobby\"}").statusCode(), "enabled fehlt");
+            assertEquals(400, post(client, port, KEY, RestModule.MAINTENANCE_PATH,
+                    "{\"name\":\"Lobby\",\"enabled\":\"ja\"}").statusCode(), "enabled ist kein Schalter");
+            assertEquals(400, post(client, port, KEY, RestModule.SCALE_PATH,
+                    "{\"name\":\"Lobby\",\"target\":-1}").statusCode(), "negative Anzahl");
+            assertEquals(400, post(client, port, KEY, RestModule.SCALE_PATH,
+                    "{\"name\":\"Lobby\",\"target\":\"viele\"}").statusCode(), "keine Zahl");
+            assertEquals(400, post(client, port, KEY, RestModule.CONNECT_PATH,
+                    "{\"uuid\":\"keine-uuid\",\"service\":\"Lobby-1\"}").statusCode());
+            assertEquals(400, post(client, port, KEY, RestModule.CONNECT_PATH,
+                    "{\"uuid\":\"" + PLAYER_ID + "\"}").statusCode(), "service fehlt");
+            assertEquals(400, post(client, port, KEY, RestModule.KICK_PATH,
+                    "{}").statusCode(), "uuid fehlt");
+
+            assertTrue(services.calls.isEmpty(), "kein fehlerhafter Aufruf erreicht die Cloud: " + services.calls);
+            assertTrue(groups.calls.isEmpty(), groups.calls.toString());
+            assertTrue(players.calls.isEmpty(), players.calls.toString());
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void aFailingRestartOrKickAnswers409() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            services.failure = new IllegalStateException("Service läuft nicht");
+            HttpResponse<String> restart = post(client, port, KEY, RestModule.RESTART_PATH,
+                    "{\"id\":\"" + LOBBY_ID + "\"}");
+            assertEquals(409, restart.statusCode(), restart.body());
+            assertTrue(restart.body().contains("Service läuft nicht"), restart.body());
+
+            players.failure = new IllegalStateException("Spieler ist nicht verbunden");
+            HttpResponse<String> kick = post(client, port, KEY, RestModule.KICK_PATH,
+                    "{\"uuid\":\"" + PLAYER_ID + "\"}");
+            assertEquals(409, kick.statusCode(), kick.body());
+            assertTrue(kick.body().contains("nicht verbunden"), kick.body());
+            assertEquals(List.of("kick:" + PLAYER_ID + ":"), players.calls,
+                    "ohne Begründung geht ein leerer Text an die Cloud");
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void reapplyAndOnlineReachTheCloud() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpResponse<String> reapplied = post(client, port, KEY, RestModule.REAPPLY_PATH,
+                    "{\"id\":\"" + LOBBY_ID + "\"}");
+            assertEquals(200, reapplied.statusCode(), reapplied.body());
+            assertTrue(reapplied.body().contains("\"reapplied\":true"), reapplied.body());
+
+            HttpResponse<String> online = post(client, port, KEY, RestModule.ONLINE_PATH,
+                    "{\"id\":\"" + PROXY_ID + "\"}");
+            assertEquals(200, online.statusCode(), online.body());
+            assertTrue(online.body().contains("\"online\":true"), online.body());
+
+            assertEquals(400, post(client, port, KEY, RestModule.REAPPLY_PATH, "{}").statusCode(),
+                    "id fehlt");
+            assertEquals(400, post(client, port, KEY, RestModule.ONLINE_PATH,
+                    "{\"id\":\"keine-uuid\"}").statusCode());
+
+            assertEquals(List.of("reapply:" + LOBBY_ID, "online:" + PROXY_ID), services.calls);
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void logsAndCrashDataAreServed() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of("host", "127.0.0.1", "port", String.valueOf(port), "apiKey", KEY));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpResponse<String> overview = get(client, port, KEY);
+            assertTrue(overview.body().contains("\"crashBudgetRemaining\":2"), overview.body());
+            assertTrue(overview.body().contains("\"crashBudgetTotal\":3"), overview.body());
+            assertTrue(overview.body().contains("\"lastCrashReason\":\"OutOfMemoryError\""),
+                    overview.body());
+            assertTrue(overview.body().contains("\"crashReport\":\"/reports/lobby-1\""), overview.body());
+
+            assertEquals(401, get(client, port, null, RestModule.LOGS_PATH + "?id=" + LOBBY_ID)
+                    .statusCode(), "Logs brauchen den Key");
+
+            HttpResponse<String> tail = get(client, port, KEY,
+                    RestModule.LOGS_PATH + "?id=" + LOBBY_ID + "&lines=2");
+            assertEquals(200, tail.statusCode(), tail.body());
+            assertTrue(tail.body().contains("[WARN] Wenig Speicher"), tail.body());
+            assertFalse(tail.body().contains("[INFO] Start"),
+                    "nur die letzten beiden Zeilen: " + tail.body());
+
+            HttpResponse<String> all = get(client, port, KEY, RestModule.LOGS_PATH + "?id=" + LOBBY_ID);
+            assertEquals(200, all.statusCode(), all.body());
+            assertTrue(all.body().contains("[INFO] Start"), all.body());
+
+            assertEquals(400, get(client, port, KEY, RestModule.LOGS_PATH).statusCode(), "id fehlt");
+            assertEquals(400, get(client, port, KEY, RestModule.LOGS_PATH + "?id=keine-uuid").statusCode());
+            assertEquals(400, get(client, port, KEY,
+                    RestModule.LOGS_PATH + "?id=" + LOBBY_ID + "&lines=viele").statusCode());
+
+            assertEquals(List.of("logs:" + LOBBY_ID, "logs:" + LOBBY_ID), services.calls);
         } finally {
             module.onDisable();
         }
@@ -311,13 +505,13 @@ class RestModuleTest {
             }
 
             @Override
-            public dev.bytestorm.api.player.Players players() {
-                throw new UnsupportedOperationException();
+            public Players players() {
+                return players;
             }
 
             @Override
-            public dev.bytestorm.api.group.Groups groups() {
-                throw new UnsupportedOperationException();
+            public Groups groups() {
+                return groups;
             }
 
             @Override
@@ -420,7 +614,9 @@ class RestModuleTest {
 
         @Override
         public CompletableFuture<Void> restart(String serviceId) {
-            throw new UnsupportedOperationException();
+            calls.add("restart:" + serviceId);
+            return failure == null ? CompletableFuture.completedFuture(null)
+                    : CompletableFuture.failedFuture(failure);
         }
 
         @Override
@@ -429,6 +625,148 @@ class RestModuleTest {
             return failure == null ? CompletableFuture.completedFuture(null)
                     : CompletableFuture.failedFuture(failure);
         }
+
+        @Override
+        public CompletableFuture<Void> reapply(String serviceId) {
+            calls.add("reapply:" + serviceId);
+            return failure == null ? CompletableFuture.completedFuture(null)
+                    : CompletableFuture.failedFuture(failure);
+        }
+
+        @Override
+        public CompletableFuture<Void> online(String serviceId) {
+            calls.add("online:" + serviceId);
+            return failure == null ? CompletableFuture.completedFuture(null)
+                    : CompletableFuture.failedFuture(failure);
+        }
+
+        @Override
+        public List<String> logs(String serviceId) {
+            calls.add("logs:" + serviceId);
+            if (failure != null) {
+                throw failure;
+            }
+            return List.of("[INFO] Start", "[INFO] Fertig", "[WARN] Wenig Speicher");
+        }
+
+        @Override
+        public List<ServiceCrash> lastCrashes() {
+            return List.of(new ServiceCrash("Lobby-1", "OutOfMemoryError", 1, 1_700_000_000_000L,
+                    "/reports/lobby-1"));
+        }
+
+        @Override
+        public Map<String, CrashBudget> crashBudgets() {
+            return Map.of("Lobby-1", new CrashBudget(2, 3));
+        }
+    }
+
+    /** Gruppen-Fassade, die Aufrufe mitschreibt und Fehler auf Wunsch liefert. */
+    private static final class FakeGroups implements Groups {
+
+        private final List<String> calls = new ArrayList<>();
+        private RuntimeException failure;
+
+        @Override
+        public Collection<ServiceGroup> all() {
+            return List.of(group("Lobby", false), group("Proxy", true));
+        }
+
+        @Override
+        public Optional<ServiceGroup> get(String name) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CompletableFuture<Void> create(ServiceGroup group) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CompletableFuture<Void> update(ServiceGroup group) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CompletableFuture<Void> delete(String name) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CompletableFuture<Void> setMaintenance(String name, boolean maintenance) {
+            calls.add("maintenance:" + name + ":" + maintenance);
+            return done(failure);
+        }
+
+        @Override
+        public CompletableFuture<Void> scale(String name, int targetServices) {
+            calls.add("scale:" + name + ":" + targetServices);
+            return done(failure);
+        }
+    }
+
+    /** Spieler-Fassade mit einem verbundenen Spieler. */
+    private static final class FakePlayers implements Players {
+
+        private final List<String> calls = new ArrayList<>();
+        private RuntimeException failure;
+
+        @Override
+        public Collection<PlayerInfo> online() {
+            return List.of(PlayerInfo.newBuilder()
+                    .setUuid(PLAYER_ID)
+                    .setName("Notch")
+                    .setProxy("Proxy-1")
+                    .setServer("Lobby-1")
+                    .build());
+        }
+
+        @Override
+        public Collection<PlayerInfo> all() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<PlayerInfo> byUuid(UUID uuid) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<PlayerInfo> byName(String name) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CompletableFuture<Void> connect(UUID uuid, String service) {
+            calls.add("connect:" + uuid + ":" + service);
+            return done(failure);
+        }
+
+        @Override
+        public CompletableFuture<Void> kick(UUID uuid, String reason) {
+            calls.add("kick:" + uuid + ":" + reason);
+            return done(failure);
+        }
+
+        @Override
+        public CompletableFuture<Duration> playtime(UUID uuid) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static ServiceGroup group(String name, boolean maintenance) {
+        return ServiceGroup.newBuilder()
+                .setName(name)
+                .setType(ServiceType.SERVER)
+                .setMaintenance(maintenance)
+                .setMaxServices(4)
+                .setMaxPlayers(100)
+                .build();
+    }
+
+    private static CompletableFuture<Void> done(RuntimeException failure) {
+        return failure == null ? CompletableFuture.completedFuture(null)
+                : CompletableFuture.failedFuture(failure);
     }
 
     private static HttpResponse<String> get(HttpClient client, int port, String key) throws Exception {

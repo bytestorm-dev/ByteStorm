@@ -6,6 +6,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.bytestorm.api.ByteStormApi;
 import dev.bytestorm.api.CloudModule;
 import dev.bytestorm.api.module.ModuleContext;
+import dev.bytestorm.api.service.CrashBudget;
+import dev.bytestorm.api.service.ServiceCrash;
+import dev.bytestorm.proto.PlayerInfo;
+import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.StartServiceResponse;
 import io.javalin.Javalin;
@@ -58,6 +62,42 @@ public final class RestModule implements CloudModule {
 
     /** {@code POST /services/command} — schickt eine Zeile an die Service-Konsole. */
     public static final String COMMAND_PATH = SERVICES_PATH + "/command";
+
+    /** {@code POST /services/restart} — startet einen Service neu (§9.2). */
+    public static final String RESTART_PATH = SERVICES_PATH + "/restart";
+
+    /** {@code GET /services/logs?id=…&lines=…} — letzte Logzeilen eines Services. */
+    public static final String LOGS_PATH = SERVICES_PATH + "/logs";
+
+    /** {@code POST /services/reapply} — Templates eines Services erneut anwenden (§10). */
+    public static final String REAPPLY_PATH = SERVICES_PATH + "/reapply";
+
+    /** {@code POST /services/online} — Service als {@code ONLINE} melden (§14). */
+    public static final String ONLINE_PATH = SERVICES_PATH + "/online";
+
+    /** Ohne {@code lines} liefert die Log-Abfrage so viele Zeilen. */
+    static final int DEFAULT_LOG_LINES = 20;
+
+    /** Mehr Zeilen gibt ein einzelner Aufruf nicht heraus. */
+    static final int MAX_LOG_LINES = 200;
+
+    /** {@code GET /groups} — alle Gruppen-Definitionen samt laufender Services (§11). */
+    public static final String GROUPS_PATH = "/groups";
+
+    /** {@code POST /groups/maintenance} — Wartungsmodus einer Gruppe (§14). */
+    public static final String MAINTENANCE_PATH = GROUPS_PATH + "/maintenance";
+
+    /** {@code POST /groups/scale} — Gruppe manuell skalieren (§11). */
+    public static final String SCALE_PATH = GROUPS_PATH + "/scale";
+
+    /** {@code GET /players} — verbundene Spieler (§8). */
+    public static final String PLAYERS_PATH = "/players";
+
+    /** {@code POST /players/connect} — Spieler auf einen Service schicken (§14). */
+    public static final String CONNECT_PATH = PLAYERS_PATH + "/connect";
+
+    /** {@code POST /players/kick} — Spieler vom Netz trennen (§14). */
+    public static final String KICK_PATH = PLAYERS_PATH + "/kick";
 
     /** Wie lange eine Anfrage auf die Cloud wartet, bevor sie aufgibt. */
     static final long TIMEOUT_SECONDS = 30;
@@ -119,6 +159,16 @@ public final class RestModule implements CloudModule {
             config.routes.post(START_PATH, ctx -> start(ctx, api));
             config.routes.post(STOP_PATH, ctx -> stop(ctx, api));
             config.routes.post(COMMAND_PATH, ctx -> command(ctx, api));
+            config.routes.post(RESTART_PATH, ctx -> restart(ctx, api));
+            config.routes.get(LOGS_PATH, ctx -> logs(ctx, api));
+            config.routes.post(REAPPLY_PATH, ctx -> reapply(ctx, api));
+            config.routes.post(ONLINE_PATH, ctx -> online(ctx, api));
+            config.routes.get(GROUPS_PATH, ctx -> groups(ctx, api));
+            config.routes.post(MAINTENANCE_PATH, ctx -> maintenance(ctx, api));
+            config.routes.post(SCALE_PATH, ctx -> scale(ctx, api));
+            config.routes.get(PLAYERS_PATH, ctx -> players(ctx, api));
+            config.routes.post(CONNECT_PATH, ctx -> connect(ctx, api));
+            config.routes.post(KICK_PATH, ctx -> kick(ctx, api));
             config.routes.exception(ApiException.class,
                     (error, ctx) -> error(ctx, error.status(), error.getMessage()));
             config.routes.exception(Exception.class, (error, ctx) -> {
@@ -193,11 +243,45 @@ public final class RestModule implements CloudModule {
      * @param api öffentliche API
      */
     private static void services(Context ctx, ByteStormApi api) {
+        Map<String, CrashBudget> budgets = budgets(api);
+        Map<String, ServiceCrash> crashes = crashes(api);
         List<Map<String, Object>> services = api.services().all().stream()
                 .sorted(Comparator.comparing(ServiceInfo::getName, String.CASE_INSENSITIVE_ORDER))
-                .map(RestModule::toJson)
+                .map(info -> toJson(info, budgets.get(info.getName()), crashes.get(info.getName())))
                 .toList();
         write(ctx, 200, Map.of("services", services));
+    }
+
+    /**
+     * Liest die Budgets so, dass ein Fehler die Übersicht nicht verhindert.
+     *
+     * @param api öffentliche API
+     * @return Budgets je Service-Name, leer wenn nicht lesbar
+     */
+    private static Map<String, CrashBudget> budgets(ByteStormApi api) {
+        try {
+            return api.services().crashBudgets();
+        } catch (RuntimeException e) {
+            // Ohne Budget bleibt die Spalte leer statt die Antwort zu kippen.
+            return Map.of();
+        }
+    }
+
+    /**
+     * @param api öffentliche API
+     * @return der letzte Absturz je Service-Name, leer wenn nicht lesbar
+     */
+    private static Map<String, ServiceCrash> crashes(ByteStormApi api) {
+        Map<String, ServiceCrash> latest = new LinkedHashMap<>();
+        try {
+            // Der Controller liefert neueste zuerst; der erste Eintrag je Service zählt.
+            for (ServiceCrash crash : api.services().lastCrashes()) {
+                latest.putIfAbsent(crash.service(), crash);
+            }
+        } catch (RuntimeException e) {
+            // Eine unlesbare Crash-Historie darf die Übersicht nicht verhindern.
+        }
+        return Map.copyOf(latest);
     }
 
     /**
@@ -251,6 +335,158 @@ public final class RestModule implements CloudModule {
         String command = requiredText(body, "command");
         await(api.services().execute(id, command));
         write(ctx, 200, Map.of("id", id, "sent", command));
+    }
+
+    /**
+     * {@code GET /services/logs}: letzte Logzeilen eines Services. {@code lines}
+     * begrenzt die Ausgabe; ohne Angabe gelten {@value #DEFAULT_LOG_LINES} Zeilen.
+     *
+     * @param ctx Anfrage mit {@code id} und optional {@code lines}
+     * @param api öffentliche API
+     * @throws ApiException wenn die Parameter fehlen oder unbrauchbar sind
+     */
+    private static void logs(Context ctx, ByteStormApi api) {
+        String id = requiredQueryUuid(ctx, "id");
+        int limit = limit(ctx.queryParam("lines"));
+        List<String> lines = api.services().logs(id);
+        List<String> tail = lines.size() <= limit
+                ? List.copyOf(lines)
+                : List.copyOf(lines.subList(lines.size() - limit, lines.size()));
+        write(ctx, 200, Map.of("id", id, "lines", tail));
+    }
+
+    /**
+     * {@code POST /services/restart}: startet einen Service neu.
+     *
+     * @param ctx Anfrage mit {@code id}
+     * @param api öffentliche API
+     * @throws ApiException wenn der Neustart scheitert
+     */
+    private static void restart(Context ctx, ByteStormApi api) {
+        JsonNode body = request(ctx);
+        String id = requiredServiceId(body);
+        await(api.services().restart(id));
+        write(ctx, 200, Map.of("id", id, "restarted", true));
+    }
+
+    /**
+     * {@code POST /services/reapply}: wendet die Templates eines Services erneut an.
+     *
+     * @param ctx Anfrage mit {@code id}
+     * @param api öffentliche API
+     * @throws ApiException wenn das Anwenden scheitert
+     */
+    private static void reapply(Context ctx, ByteStormApi api) {
+        JsonNode body = request(ctx);
+        String id = requiredServiceId(body);
+        await(api.services().reapply(id));
+        write(ctx, 200, Map.of("id", id, "reapplied", true));
+    }
+
+    /**
+     * {@code POST /services/online}: meldet einen Service als {@code ONLINE}.
+     *
+     * @param ctx Anfrage mit {@code id}
+     * @param api öffentliche API
+     * @throws ApiException wenn der Service unbekannt ist
+     */
+    private static void online(Context ctx, ByteStormApi api) {
+        JsonNode body = request(ctx);
+        String id = requiredServiceId(body);
+        await(api.services().online(id));
+        write(ctx, 200, Map.of("id", id, "online", true));
+    }
+
+    /**
+     * {@code GET /groups}: alle Gruppen mit der aktuellen Anzahl ihrer Services.
+     *
+     * @param ctx Anfrage
+     * @param api öffentliche API
+     */
+    private static void groups(Context ctx, ByteStormApi api) {
+        List<ServiceInfo> services = List.copyOf(api.services().all());
+        List<Map<String, Object>> groups = api.groups().all().stream()
+                .sorted(Comparator.comparing(ServiceGroup::getName, String.CASE_INSENSITIVE_ORDER))
+                .map(group -> toJson(group, (int) services.stream()
+                        .filter(service -> service.getGroup().equals(group.getName()))
+                        .count()))
+                .toList();
+        write(ctx, 200, Map.of("groups", groups));
+    }
+
+    /**
+     * {@code POST /groups/maintenance}: schaltet den Wartungsmodus einer Gruppe.
+     *
+     * @param ctx Anfrage mit {@code name} und {@code enabled}
+     * @param api öffentliche API
+     * @throws ApiException wenn die Cloud ablehnt
+     */
+    private static void maintenance(Context ctx, ByteStormApi api) {
+        JsonNode body = request(ctx);
+        String name = requiredText(body, "name");
+        boolean enabled = requiredFlag(body, "enabled");
+        await(api.groups().setMaintenance(name, enabled));
+        write(ctx, 200, Map.of("group", name, "maintenance", enabled));
+    }
+
+    /**
+     * {@code POST /groups/scale}: setzt die Anzahl der Services einer Gruppe.
+     *
+     * @param ctx Anfrage mit {@code name} und {@code target}
+     * @param api öffentliche API
+     * @throws ApiException wenn die Cloud ablehnt
+     */
+    private static void scale(Context ctx, ByteStormApi api) {
+        JsonNode body = request(ctx);
+        String name = requiredText(body, "name");
+        int target = requiredCount(body, "target");
+        await(api.groups().scale(name, target));
+        write(ctx, 200, Map.of("group", name, "target", target));
+    }
+
+    /**
+     * {@code GET /players}: alle verbundenen Spieler, alphabetisch nach Namen.
+     *
+     * @param ctx Anfrage
+     * @param api öffentliche API
+     */
+    private static void players(Context ctx, ByteStormApi api) {
+        List<Map<String, Object>> players = api.players().online().stream()
+                .sorted(Comparator.comparing(PlayerInfo::getName, String.CASE_INSENSITIVE_ORDER))
+                .map(RestModule::toJson)
+                .toList();
+        write(ctx, 200, Map.of("players", players));
+    }
+
+    /**
+     * {@code POST /players/connect}: schickt einen Spieler auf einen Service.
+     *
+     * @param ctx Anfrage mit {@code uuid} und {@code service}
+     * @param api öffentliche API
+     * @throws ApiException wenn das Routing scheitert
+     */
+    private static void connect(Context ctx, ByteStormApi api) {
+        JsonNode body = request(ctx);
+        String uuid = requiredUuid(body, "uuid");
+        String service = requiredText(body, "service");
+        await(api.players().connect(UUID.fromString(uuid), service));
+        write(ctx, 200, Map.of("uuid", uuid, "service", service));
+    }
+
+    /**
+     * {@code POST /players/kick}: trennt einen Spieler vom Netz. Die Begründung
+     * ist optional; leer ersetzt die Bridge selbst.
+     *
+     * @param ctx Anfrage mit {@code uuid} und optional {@code reason}
+     * @param api öffentliche API
+     * @throws ApiException wenn der Kick scheitert
+     */
+    private static void kick(Context ctx, ByteStormApi api) {
+        JsonNode body = request(ctx);
+        String uuid = requiredUuid(body, "uuid");
+        String reason = textOf(body, "reason", "");
+        await(api.players().kick(UUID.fromString(uuid), reason));
+        write(ctx, 200, Map.of("uuid", uuid, "kicked", true));
     }
 
     /**
@@ -311,6 +547,106 @@ public final class RestModule implements CloudModule {
     }
 
     /**
+     * @param ctx       Anfrage
+     * @param parameter Name des Query-Parameters
+     * @return die UUID als String
+     * @throws ApiException wenn der Parameter fehlt oder keine UUID ist
+     */
+    private static String requiredQueryUuid(Context ctx, String parameter) {
+        String value = ctx.queryParam(parameter);
+        if (value == null || value.isBlank()) {
+            throw new ApiException(400, "Parameter '" + parameter + "' fehlt");
+        }
+        String id = value.trim();
+        try {
+            UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(400, "Parameter '" + parameter + "' ist keine UUID: " + id);
+        }
+        return id;
+    }
+
+    /**
+     * @param raw Wert des Parameters {@code lines}
+     * @return die Zeilenzahl zwischen 1 und {@value #MAX_LOG_LINES}
+     * @throws ApiException wenn der Wert keine Zahl ist
+     */
+    private static int limit(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return DEFAULT_LOG_LINES;
+        }
+        int lines;
+        try {
+            lines = Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new ApiException(400, "Parameter 'lines' ist keine Zahl: " + raw);
+        }
+        return Math.max(1, Math.min(lines, MAX_LOG_LINES));
+    }
+
+    /**
+     * @param body  JSON-Body
+     * @param field erwartetes Feld
+     * @return der Schalterwert
+     * @throws ApiException wenn das Feld fehlt oder kein Wahrheitswert ist
+     */
+    private static boolean requiredFlag(JsonNode body, String field) {
+        JsonNode value = body.get(field);
+        if (value == null || !value.isBoolean()) {
+            throw new ApiException(400, "Feld '" + field + "' muss true oder false sein");
+        }
+        return value.asBoolean();
+    }
+
+    /**
+     * @param body  JSON-Body
+     * @param field erwartetes Feld
+     * @return die nicht-negative Zahl
+     * @throws ApiException wenn das Feld fehlt, keine ganze Zahl oder negativ ist
+     */
+    private static int requiredCount(JsonNode body, String field) {
+        JsonNode value = body.get(field);
+        if (value == null || !value.isIntegralNumber() || value.asInt() < 0) {
+            throw new ApiException(400, "Feld '" + field + "' muss eine ganze Zahl ab 0 sein");
+        }
+        return value.asInt();
+    }
+
+    /**
+     * @param body  JSON-Body
+     * @param field erwartetes Feld
+     * @return die UUID als String
+     * @throws ApiException wenn das Feld fehlt oder keine UUID ist
+     */
+    private static String requiredUuid(JsonNode body, String field) {
+        String uuid = requiredText(body, field);
+        try {
+            UUID.fromString(uuid);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(400, "Feld '" + field + "' ist keine UUID: " + uuid);
+        }
+        return uuid;
+    }
+
+    /**
+     * @param body     JSON-Body
+     * @param field    optionales Feld
+     * @param fallback Wert, wenn das Feld fehlt
+     * @return der Text des Felds
+     * @throws ApiException wenn das Feld kein einzelner Wert ist
+     */
+    private static String textOf(JsonNode body, String field, String fallback) {
+        JsonNode value = body.get(field);
+        if (value == null || value.isNull()) {
+            return fallback;
+        }
+        if (!value.isValueNode()) {
+            throw new ApiException(400, "Feld '" + field + "' muss ein einzelner Wert sein");
+        }
+        return value.asText().trim();
+    }
+
+    /**
      * @param body JSON-Body
      * @return die optionalen Properties aus {@code properties}
      * @throws ApiException wenn {@code properties} kein Objekt aus einzelnen Werten ist
@@ -324,7 +660,7 @@ public final class RestModule implements CloudModule {
             throw new ApiException(400, "Feld 'properties' muss ein Objekt sein");
         }
         Map<String, String> properties = new LinkedHashMap<>();
-        node.fields().forEachRemaining(entry -> {
+        node.properties().forEach(entry -> {
             JsonNode value = entry.getValue();
             if (value == null || !value.isValueNode()) {
                 throw new ApiException(400,
@@ -363,6 +699,10 @@ public final class RestModule implements CloudModule {
     }
 
     private static Map<String, Object> toJson(ServiceInfo info) {
+        return toJson(info, null, null);
+    }
+
+    private static Map<String, Object> toJson(ServiceInfo info, CrashBudget budget, ServiceCrash crash) {
         Map<String, Object> json = new LinkedHashMap<>();
         json.put("id", info.getId());
         json.put("name", info.getName());
@@ -378,6 +718,36 @@ public final class RestModule implements CloudModule {
         json.put("fallback", info.getFallback());
         json.put("fallbackPriority", info.getFallbackPriority());
         json.put("properties", info.getPropertiesMap());
+        json.put("crashBudgetRemaining", budget == null ? 0 : budget.remaining());
+        json.put("crashBudgetTotal", budget == null ? 0 : budget.total());
+        json.put("lastCrashReason", crash == null ? "" : crash.reason());
+        json.put("lastCrashTime", crash == null ? 0L : crash.time());
+        json.put("lastCrashExitCode", crash == null ? 0 : crash.exitCode());
+        json.put("crashReport", crash == null ? "" : crash.report());
+        return json;
+    }
+
+    private static Map<String, Object> toJson(ServiceGroup group, int running) {
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("name", group.getName());
+        json.put("type", group.getType().name());
+        json.put("platform", group.getPlatform());
+        json.put("version", group.getVersion());
+        json.put("mode", group.getMode().name());
+        json.put("maintenance", group.getMaintenance());
+        json.put("services", running);
+        json.put("minServices", group.getMinServices());
+        json.put("maxServices", group.getMaxServices());
+        json.put("maxPlayers", group.getMaxPlayers());
+        return json;
+    }
+
+    private static Map<String, Object> toJson(PlayerInfo player) {
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("uuid", player.getUuid());
+        json.put("name", player.getName());
+        json.put("proxy", player.getProxy());
+        json.put("server", player.getServer());
         return json;
     }
 

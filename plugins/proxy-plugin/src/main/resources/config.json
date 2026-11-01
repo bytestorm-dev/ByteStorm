@@ -1,0 +1,20 @@
+{
+  "language": "en",
+  "tablist": {
+    "enabled": true,
+    "updateSeconds": 5,
+    "permission": "bytestorm.tablist.admin"
+  },
+  "maintenance": {
+    "enabled": false,
+    "bypassPermission": "bytestorm.maintenance.bypass",
+    "allowedPlayers": []
+  },
+  "cloud": {
+    "enabled": false,
+    "baseUrl": "http://127.0.0.1:8080",
+    "apiKey": "",
+    "permission": "bytestorm.cloud.command",
+    "timeoutSeconds": 10
+  }
+}

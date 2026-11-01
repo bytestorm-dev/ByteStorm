@@ -142,6 +142,12 @@ tasks.register<Zip>("distributionZip") {
             rename { "module-$module.jar" }
         }
     }
+    // Proxy-Plugins liegen unter plugins/ im Zip: Der Betreiber kopiert sie in den
+    // plugins/-Ordner seines Proxys; sie laufen nicht in der Cloud.
+    from(project(":plugins:proxy-plugin").tasks.named("shadowJar")) {
+        into("plugins")
+        rename { "bytestorm-proxy.jar" }
+    }
 }
 
 // Der CloudStartupE2ETest kopiert die fertigen Bridge-Jars aus den Bridge-Modulen.
