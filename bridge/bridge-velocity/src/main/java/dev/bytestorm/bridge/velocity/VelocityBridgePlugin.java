@@ -237,10 +237,33 @@ public final class VelocityBridgePlugin implements BridgePlatform {
             return;
         }
         String kicked = event.getServer().getServerInfo().getName();
+        InetSocketAddress kickedAddress = event.getServer().getServerInfo().getAddress();
         FallbackSelector.select(onlineServices.values(), kicked)
+                // Derselbe Server kann unter zwei Namen laufen (alter Eintrag in velocity.toml
+                // plus Registry-Name). Eine Umleitung auf die andere Adresse desselben Ports
+                // würde ihn sofort wieder kicken — und die beiden Namen endlos hin- und
+                // herschicken. Deshalb zählt die Adresse, nicht der Name.
+                .filter(service -> !sameAddress(service, kickedAddress))
                 .flatMap(service -> server.getServer(service.getName()))
                 .ifPresent(target -> event.setResult(
                         KickedFromServerEvent.RedirectPlayer.create(target)));
+    }
+
+    /**
+     * @param service Service aus der Registry
+     * @param address Adresse des Servers, von dem der Spieler kam
+     * @return {@code true}, wenn beide auf denselben Prozess zeigen
+     */
+    private static boolean sameAddress(ServiceInfo service, InetSocketAddress address) {
+        if (address == null || service.getHost().isBlank()) {
+            return false;
+        }
+        String host = address.getAddress() == null
+                ? address.getHostString()
+                : address.getAddress().getHostAddress();
+        return service.getPort() == address.getPort()
+                && (service.getHost().equalsIgnoreCase(host)
+                || service.getHost().equalsIgnoreCase(address.getHostString()));
     }
 
     @Override
