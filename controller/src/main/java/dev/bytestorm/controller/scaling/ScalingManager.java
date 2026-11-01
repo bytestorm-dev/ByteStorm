@@ -12,6 +12,7 @@ import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceMode;
 import dev.bytestorm.proto.ServiceState;
+import dev.bytestorm.proto.ServiceType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,7 +57,9 @@ import java.util.stream.Collectors;
  *       haben ({@code DEGRADED}); solche Gruppen startet nur der Betreiber von
  *       Hand, damit die Cloud nicht endlos neue Services nachschiebt,</li>
  *   <li>kein automatischer Stop von statischen Services oder Services mit
- *       Spielern.</li>
+ *       Spielern,</li>
+ *   <li>Proxy-Gruppen vor Backend-Gruppen im selben Lauf, damit kein Backend
+ *       startet, bevor der Proxy da ist, der es annimmt.</li>
  * </ul>
  *
  * <p>{@link #tick()} führt Aktionen aus. {@link #explain()} nutzt denselben
@@ -276,7 +279,12 @@ public final class ScalingManager implements AutoCloseable, GroupScaler {
     }
 
     private void evaluate(Instant now, boolean apply, List<ScalingDecision> decisions) {
-        List<ServiceGroup> currentGroups = Objects.requireNonNull(groups.get(), "groups");
+        List<ServiceGroup> currentGroups = new ArrayList<>(Objects.requireNonNull(groups.get(), "groups"));
+        // Proxies zuerst: Ein Backend, das vor seinem Proxy startet, nimmt keine Spieler
+        // an; umgekehrt ist eine offene Proxy-Verbindung immer nützlicher. Der Sort ist
+        // stabil, die Reihenfolge innerhalb einer Art bleibt also erhalten.
+        currentGroups.sort(Comparator.comparingInt(
+                (ServiceGroup group) -> group.getType() == ServiceType.PROXY ? 0 : 1));
         List<ServiceInfo> currentServices = Objects.requireNonNull(services.get(), "services");
         Map<String, List<ServiceInfo>> byGroup = currentServices.stream()
                 .collect(Collectors.groupingBy(ServiceInfo::getGroup));

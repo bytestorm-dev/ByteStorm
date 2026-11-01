@@ -11,6 +11,7 @@ import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceMode;
 import dev.bytestorm.proto.ServiceState;
+import dev.bytestorm.proto.ServiceType;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -197,6 +198,21 @@ class ScalingManagerTest {
         clock.advance(Duration.ofMinutes(5));
         manager.tick();
         assertEquals(1, actions.stops.size());
+    }
+
+    @Test
+    void proxiesStartBeforeBackendsInTheSameCycle() {
+        // Reihenfolge in der Liste ist absichtlich verkehrt herum.
+        groups.add(group("Lobby", 1, 4, ServiceMode.DYNAMIC, null).toBuilder()
+                .setType(ServiceType.SERVER)
+                .build());
+        groups.add(proxy("Proxy", 1));
+        ScalingManager manager = manager();
+
+        manager.tick();
+
+        assertEquals(List.of("Proxy", "Lobby"), groupsOf(actions.starts),
+                "der Proxy muss vor dem Backend starten, das er annimmt");
     }
 
     @Test
@@ -513,6 +529,21 @@ class ScalingManagerTest {
                     .setPlayerCount(rule));
         }
         return builder.build();
+    }
+
+    private static List<String> groupsOf(List<String> serviceNames) {
+        return serviceNames.stream().map(name -> name.replaceFirst("-\\d+$", "")).toList();
+    }
+
+    private static ServiceGroup proxy(String name, int minimum) {
+        return ServiceGroup.newBuilder()
+                .setName(name)
+                .setType(ServiceType.PROXY)
+                .setMode(ServiceMode.STATIC)
+                .setMinServices(minimum)
+                .setMaxServices(minimum)
+                .setMaxPlayers(100)
+                .build();
     }
 
     private static ServiceGroup withRule(ServiceGroup group, ScalingRule rule) {
