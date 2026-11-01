@@ -31,4 +31,21 @@ public record PortSettings(int proxy, int serverStart) {
     public PortRange serverRange() {
         return new PortRange(serverStart, 65535);
     }
+
+    /**
+     * Port-Bereich für Proxy-Services: {@link #proxy()} bis vor den ersten
+     * Server-Port, damit beide Pools getrennt bleiben.
+     *
+     * <p>Ein zweiter Proxy-Port ist kein Luxus: Der Proxy belegt seinen Port
+     * exklusiv, und ein Zombie-Prozess oder eine hängende Reservierung hält
+     * {@code 25565} auch dann, wenn der Service gestoppt ist. Mit dem Pool weicht
+     * der Proxy nach oben aus, statt den Start mit "Kein freier Port" zu verweigern.
+     * Der erste Versuch bleibt der konfigurierte Port.
+     *
+     * @return Port-Bereich ab {@link #proxy()}; liegt der Server-Pool darunter,
+     *         bleibt es bei diesem einen Port
+     */
+    public PortRange proxyRange() {
+        return new PortRange(proxy, Math.max(proxy, Math.min(serverStart - 1, 65535)));
+    }
 }

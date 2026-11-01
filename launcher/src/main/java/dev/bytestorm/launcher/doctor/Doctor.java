@@ -1,6 +1,7 @@
 package dev.bytestorm.launcher.doctor;
 
 import dev.bytestorm.api.service.Platforms;
+import dev.bytestorm.api.service.PortRange;
 import dev.bytestorm.cli.Diagnostics;
 import dev.bytestorm.cli.Diagnostics.Finding;
 import dev.bytestorm.cli.Diagnostics.Severity;
@@ -269,6 +270,7 @@ public final class Doctor implements Diagnostics {
 
     private void ports(List<Finding> findings, CloudConfig current, List<ServiceInfo> known) {
         PortSettings ports = current.ports();
+        PortRange proxyPool = ports.proxyRange();
         List<String> problems = new ArrayList<>();
         if (ports.proxy() < 1 || ports.proxy() > 65_535) {
             problems.add("Proxy-Port außerhalb 1–65535: " + ports.proxy());
@@ -284,9 +286,9 @@ public final class Doctor implements Diagnostics {
                 continue;
             }
             if (info.getType() == ServiceType.PROXY) {
-                if (info.getPort() != ports.proxy()) {
+                if (!proxyPool.contains(info.getPort())) {
                     problems.add(info.getName() + " läuft auf " + info.getPort()
-                            + ", konfiguriert ist " + ports.proxy());
+                            + ", der Proxy-Pool ist " + proxyPool.start() + "–" + proxyPool.end());
                 }
             } else if (info.getPort() < ports.serverStart()) {
                 problems.add(info.getName() + " läuft auf " + info.getPort()
@@ -295,7 +297,7 @@ public final class Doctor implements Diagnostics {
         }
         if (problems.isEmpty()) {
             findings.add(new Finding(Severity.OK, "Ports",
-                    "Proxy " + ports.proxy() + ", Server ab " + ports.serverStart()
+                    "Proxy ab " + ports.proxy() + ", Server ab " + ports.serverStart()
                             + " — registrierte Ports passen"));
         } else {
             findings.add(new Finding(Severity.WARNING, "Ports", String.join("; ", problems)));

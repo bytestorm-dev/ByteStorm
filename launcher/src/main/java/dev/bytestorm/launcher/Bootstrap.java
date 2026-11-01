@@ -492,7 +492,9 @@ public final class Bootstrap implements AutoCloseable {
                 new ProcessRuntime(layout.logs(), core.logs()),
                 new DockerRuntime(layout.logs(), core.logs(), config.docker().host()));
         PortSettings ports = config.ports();
-        PortRange proxyPort = new PortRange(ports.proxy(), ports.proxy());
+        // Der Proxy beginnt bei ports.proxy und weicht bis zum ersten Server-Port aus,
+        // wenn der Wunschport von einem Zombie oder einer Reservierung belegt ist.
+        PortRange proxyPort = ports.proxyRange();
 
         return new ServiceManager(
                 group -> runtimes.forGroup(config.runtime(), group),

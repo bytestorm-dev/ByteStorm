@@ -57,7 +57,32 @@ class DoctorTest {
                 "Lobby-1: Secret in config/paper-global.yml weicht"), findings.toString());
         assertTrue(has(findings, "MongoDB", "antwortet in 1 ms"), findings.toString());
         assertTrue(has(findings, "Redis", "antwortet in 2 ms"), findings.toString());
-        assertTrue(has(findings, "Ports", "Proxy 25565"), findings.toString());
+        assertTrue(has(findings, "Ports", "Proxy ab 25565"), findings.toString());
+    }
+
+    @Test
+    void aProxyOnTheNextPortOfThePoolIsAccepted() {
+        CloudLayout layout = new CloudLayout(root);
+        Doctor doctor = new Doctor(layout, CloudConfig::defaults, () -> List.of(),
+                () -> List.of(service("Proxy-1", ServiceType.PROXY, 25566)),
+                () -> "ok", () -> "ok");
+
+        List<Diagnostics.Finding> findings = doctor.run();
+
+        assertTrue(has(findings, "Ports", "registrierte Ports passen"), findings.toString());
+        assertFalse(has(findings, "Ports", "Proxy-Pool"), findings.toString());
+    }
+
+    @Test
+    void aProxyOutsideThePoolIsReportedWithThePoolRange() {
+        CloudLayout layout = new CloudLayout(root);
+        Doctor doctor = new Doctor(layout, CloudConfig::defaults, () -> List.of(),
+                () -> List.of(service("Proxy-1", ServiceType.PROXY, 30001)),
+                () -> "ok", () -> "ok");
+
+        List<Diagnostics.Finding> findings = doctor.run();
+
+        assertTrue(has(findings, "Ports", "der Proxy-Pool ist 25565–29999"), findings.toString());
     }
 
     @Test
