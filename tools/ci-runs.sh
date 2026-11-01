@@ -5,6 +5,7 @@
 #   export GH_TOKEN=$(gh auth token)     # oder ein Personal Access Token mit "repo"
 #   tools/ci-runs.sh                     # die letzten Läufe
 #   tools/ci-runs.sh --wait "$(git rev-parse HEAD)"
+#   tools/ci-runs.sh --logs 41327105743  # nur einen bestimmten Lauf
 #
 # Schlägt der beobachtete Lauf fehl, zeigt --wait einen Auszug aus dem Log des
 # fehlgeschlagenen Jobs. Das Token geht nur als Authorization-Header raus.
@@ -14,6 +15,7 @@ here="$(dirname "$0")"
 repo="${CI_REPO:-mzcydev/ByteStorm}"
 limit=5
 wait_sha=""
+logs_run=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --limit)
@@ -24,8 +26,12 @@ while [ $# -gt 0 ]; do
       wait_sha="${2:?--wait braucht einen Commit}"
       shift 2
       ;;
+    --logs)
+      logs_run="${2:?--logs braucht eine Run-ID}"
+      shift 2
+      ;;
     -h | --help)
-      sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -127,6 +133,27 @@ else:
     sleep 15
   done
 }
+
+if [ -n "$logs_run" ]; then
+  line="$(fetch "$runs/$logs_run" | python3 -c '
+import json, sys
+
+run = json.load(sys.stdin)
+print("%s|%s|%s" % (run.get("conclusion") or run.get("status") or "-",
+                    (run.get("head_sha") or "")[:12], run.get("html_url")))
+')"
+  conclusion="${line%%|*}"
+  rest="${line#*|}"
+  sha="${rest%%|*}"
+  url="${rest#*|}"
+  echo "Lauf $logs_run: $conclusion ($sha)  $url"
+  if [ "$conclusion" != "failure" ]; then
+    echo "Kein Fehlschlag — kein Fehlerlog zu zeigen."
+    exit 0
+  fi
+  showFailure "$logs_run"
+  exit 0
+fi
 
 if [ -n "$wait_sha" ]; then
   waitFor "$wait_sha"
