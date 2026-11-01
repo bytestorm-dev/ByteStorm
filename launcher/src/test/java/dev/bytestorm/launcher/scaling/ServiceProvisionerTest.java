@@ -225,6 +225,72 @@ class ServiceProvisionerTest {
     }
 
     @Test
+    void luckPermsIsInstalledBeforeTheServiceStarts() throws Exception {
+        CloudLayout layout = layout();
+        Files.createFile(layout.platforms().resolve("paper.jar"));
+        ServiceGroup group = ServiceGroup.newBuilder()
+                .setName("Lobby")
+                .setPlatform("paper")
+                .build();
+        List<String> installed = new java.util.ArrayList<>();
+        AtomicReference<ServiceDefinition> started = new AtomicReference<>();
+        ServiceProvisioner provisioner = new ServiceProvisioner(
+                name -> Optional.of(group),
+                (name, used) -> 1,
+                name -> false,
+                definition -> {
+                    started.set(definition);
+                    return info(definition);
+                },
+                (id, force) -> {
+                    throw new AssertionError("stop nicht erwartet");
+                },
+                layout, CloudConfig.defaults(),
+                (platform, version) -> null,
+                (installedGroup, directory, mongo, redis) -> {
+                    installed.add(installedGroup.getName());
+                    try {
+                        Files.createDirectories(directory);
+                        Files.writeString(directory.resolve("luckperms.txt"), "bereit");
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+
+        provisioner.start("Lobby");
+
+        assertEquals(List.of("Lobby"), installed);
+        assertTrue(Files.isRegularFile(started.get().directory().resolve("luckperms.txt")),
+                "LuckPerms liegt vor dem Start im Service-Ordner");
+    }
+
+    @Test
+    void aBrokenLuckPermsInstallDoesNotBlockTheStart() throws Exception {
+        CloudLayout layout = layout();
+        Files.createFile(layout.platforms().resolve("paper.jar"));
+        ServiceGroup group = ServiceGroup.newBuilder()
+                .setName("Lobby")
+                .setPlatform("paper")
+                .build();
+        ServiceProvisioner provisioner = new ServiceProvisioner(
+                name -> Optional.of(group),
+                (name, used) -> 1,
+                name -> false,
+                definition -> info(definition),
+                (id, force) -> {
+                    throw new AssertionError("stop nicht erwartet");
+                },
+                layout, CloudConfig.defaults(),
+                (platform, version) -> null,
+                (installedGroup, directory, mongo, redis) -> {
+                    throw new IllegalStateException("keine Verbindung");
+                });
+
+        assertEquals("Lobby-1", provisioner.start("Lobby").getName(),
+                "ohne LuckPerms startet der Service trotzdem");
+    }
+
+    @Test
     void unknownGroupsAndStopDelegationAreHandled() throws Exception {
         CloudLayout layout = layout();
         ServiceGroup group = ServiceGroup.newBuilder()

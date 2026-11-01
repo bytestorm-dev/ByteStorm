@@ -4,12 +4,15 @@ import dev.bytestorm.api.service.LaunchOptions;
 import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.controller.scaling.ScalingActions;
 import dev.bytestorm.core.config.CloudConfig;
+import dev.bytestorm.core.config.MongoSettings;
+import dev.bytestorm.core.config.RedisSettings;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.node.lifecycle.ServiceDefinition;
 import dev.bytestorm.node.lifecycle.ServiceLifecycleException;
 import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceMode;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -40,7 +43,12 @@ import java.util.stream.Stream;
  * properties)}) werden über die Gruppe dieser einen Definition gelegt; sie landen
  * damit im {@code ServiceInfo.properties} des Services und überschreiben
  * gleichnamige Einträge der Gruppe (§9). Die Gruppe selbst bleibt unverändert.
+ *
+ * <p>Vor dem Start wird LuckPerms bereitgestellt und mit MongoDB und Redis der
+ * Cloud verbunden (§13). Scheitert das, startet der Service trotzdem — dann
+ * fehlt nur die Rechte-Verwaltung.
  */
+@Slf4j
 public final class ServiceProvisioner implements ScalingActions {
 
     /** Default-Arbeitsspeicher, wenn die Gruppe keinen Wert gesetzt hat. */
@@ -54,6 +62,7 @@ public final class ServiceProvisioner implements ScalingActions {
     private final CloudLayout layout;
     private final CloudConfig config;
     private final PlatformProvider platformProvider;
+    private final LuckPermsProvider luckPerms;
 
     /**
      * @param groups   liefert eine Gruppe nach Namen
@@ -92,6 +101,30 @@ public final class ServiceProvisioner implements ScalingActions {
                               CloudLayout layout,
                               CloudConfig config,
                               PlatformProvider platformProvider) {
+        this(groups, names, nameUsed, starter, stopper, layout, config, platformProvider,
+                LuckPermsProvider.NONE);
+    }
+
+    /**
+     * @param groups           liefert eine Gruppe nach Namen
+     * @param names            Namensvergabe
+     * @param nameUsed         prüft, ob ein Service-Name belegt ist
+     * @param starter          startet die Definition
+     * @param stopper          stoppt einen Service
+     * @param layout           Cloud-Layout
+     * @param config           globale Runtime, MongoDB und Redis
+     * @param platformProvider lädt eine fehlende Plattform-Jar nach
+     * @param luckPerms        stellt LuckPerms samt Rechte-Datenbank bereit
+     */
+    public ServiceProvisioner(Function<String, Optional<ServiceGroup>> groups,
+                              BiFunction<String, IntPredicate, Integer> names,
+                              Predicate<String> nameUsed,
+                              Starter starter,
+                              Stopper stopper,
+                              CloudLayout layout,
+                              CloudConfig config,
+                              PlatformProvider platformProvider,
+                              LuckPermsProvider luckPerms) {
         this.groups = Objects.requireNonNull(groups, "groups");
         this.names = Objects.requireNonNull(names, "names");
         this.nameUsed = Objects.requireNonNull(nameUsed, "nameUsed");
@@ -100,6 +133,7 @@ public final class ServiceProvisioner implements ScalingActions {
         this.layout = Objects.requireNonNull(layout, "layout");
         this.config = Objects.requireNonNull(config, "config");
         this.platformProvider = Objects.requireNonNull(platformProvider, "platformProvider");
+        this.luckPerms = Objects.requireNonNull(luckPerms, "luckPerms");
     }
 
     @Override
@@ -118,7 +152,23 @@ public final class ServiceProvisioner implements ScalingActions {
                 bridgeJar(definition),
                 launchOptions(definition),
                 config.redis());
+        installLuckPerms(service);
         return starter.start(service);
+    }
+
+    /**
+     * Legt LuckPerms in den Service-Ordner, bevor die Templates greifen. Ein
+     * Fehler darf den Start nicht verhindern: Ohne LuckPerms läuft der Server,
+     * nur ohne zentrale Rechte.
+     *
+     * @param service fertige Definition
+     */
+    private void installLuckPerms(ServiceDefinition service) {
+        try {
+            luckPerms.install(service.group(), service.directory(), config.mongo(), config.redis());
+        } catch (RuntimeException e) {
+            log.warn("LuckPerms für '{}' nicht eingerichtet: {}", service.name(), e.getMessage());
+        }
     }
 
     @Override
@@ -280,6 +330,29 @@ public final class ServiceProvisioner implements ScalingActions {
          * @throws ServiceLifecycleException wenn der Download fehlschlägt
          */
         Path ensure(String platform, String version) throws ServiceLifecycleException;
+    }
+
+    /**
+     * Stellt LuckPerms im Service-Ordner bereit und verbindet es mit MongoDB und
+     * Redis, z. B. über den {@code LuckPermsInstaller}.
+     */
+    @FunctionalInterface
+    public interface LuckPermsProvider {
+
+        /**
+         * Ohne diesen Provider bleibt LuckPerms unangetastet — etwa in Tests, die
+         * nur die Definition prüfen.
+         */
+        LuckPermsProvider NONE = (group, directory, mongo, redis) -> {
+        };
+
+        /**
+         * @param group   Gruppe mit der Plattform
+         * @param directory Arbeitsordner des Services
+         * @param mongo   MongoDB der Cloud
+         * @param redis   Redis der Cloud
+         */
+        void install(ServiceGroup group, Path directory, MongoSettings mongo, RedisSettings redis);
     }
 
     /**

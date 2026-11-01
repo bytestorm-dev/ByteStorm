@@ -47,6 +47,7 @@ import dev.bytestorm.launcher.api.DefaultByteStormApi;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.launcher.layout.DefaultTemplates;
 import dev.bytestorm.launcher.layout.ServiceDirectories;
+import dev.bytestorm.launcher.luckperms.LuckPermsInstaller;
 import dev.bytestorm.launcher.platform.PlatformDownloader;
 import dev.bytestorm.launcher.scaling.ServiceProvisioner;
 import dev.bytestorm.launcher.wizard.DefaultConnectionTester;
@@ -448,7 +449,9 @@ public final class Bootstrap implements AutoCloseable {
                     return info;
                 },
                 layout, config,
-                new PlatformDownloader(layout.platforms())::ensure);
+                new PlatformDownloader(layout.platforms())::ensure,
+                // LuckPerms kommt je Plattform aus dem Cache und nutzt Mongo und Redis der Cloud.
+                new LuckPermsInstaller(layout.platforms().resolve("luckperms"))::install);
     }
 
     /**
