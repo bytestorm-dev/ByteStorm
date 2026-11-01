@@ -49,6 +49,7 @@ import dev.bytestorm.launcher.api.DefaultByteStormApi;
 import dev.bytestorm.launcher.backup.CloudBackup;
 import dev.bytestorm.launcher.doctor.ControllerRepair;
 import dev.bytestorm.launcher.doctor.Doctor;
+import dev.bytestorm.launcher.doctor.RestExposure;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.launcher.layout.DefaultTemplates;
 import dev.bytestorm.launcher.layout.ServiceDirectories;
@@ -209,9 +210,17 @@ public final class Bootstrap implements AutoCloseable {
             log.info("Forwarding-Secret aus {} übernommen", CONFIG_FILE);
         }
 
-        if (config.redis().password() == null) {
-            log.warn("Redis ohne Passwort ({}): wer im selben Netz sitzt, kann den Live-Zustand lesen "
-                    + "und verändern — 'redis.password' in {} setzen", config.redis().address(), CONFIG_FILE);
+        // Die Validierung lässt das nur mit dieser Zusage zu (§20): einmal pro Start
+        // sichtbar machen, welche Datenbank hier offen im Netz steht.
+        if (config.security().mongoAllowsInsecure()) {
+            log.warn("MongoDB ohne Anmeldung (security.allowInsecureMongo): wer im selben Netz "
+                    + "sitzt, kann den gesamten Zustand lesen und verändern — in {} abschalten, "
+                    + "sobald ein Benutzer gesetzt ist", CONFIG_FILE);
+        }
+        if (config.security().redisAllowsInsecure()) {
+            log.warn("Redis ohne Passwort (security.allowInsecureRedis): wer im selben Netz "
+                    + "sitzt, kann den Live-Zustand lesen und verändern — in {} abschalten, "
+                    + "sobald ein Passwort gesetzt ist", CONFIG_FILE);
         }
 
         ShutdownCoordinator shutdown = new ShutdownCoordinator();
@@ -315,12 +324,15 @@ public final class Bootstrap implements AutoCloseable {
                     new UpdaterCommandLine(updater),
                     // Dieselbe Messquelle wie das Scaling: CPU und RAM im Dashboard (§17).
                     new SystemHostMetrics(),
-                    // `doctor` prüft Pfade, Ports, Java, Datenbanken, Adressen und Forwarding (§14).
+                    // `doctor` prüft Pfade, Ports, Java, Datenbanken, Adressen, Forwarding
+                    // und die Erreichbarkeit der REST-API (§11, §14, §20).
                     new Doctor(layout, configService::current, groups::all, controller::services,
                             () -> timed(mongo::ping), () -> timed(redis::ping),
                             // `doctor --fix` wendet die Templates an und startet laufende
                             // Services dafür neu.
-                            new ControllerRepair(controller)),
+                            new ControllerRepair(controller),
+                            // Nur Adresse und Key-Namen, nie die Werte der Keys.
+                            () -> RestExposure.of(modules)),
                     // Sicherung von MongoDB, config/, templates/ und static/ (§15).
                     new BackupCommandLine(new CloudBackup(layout,
                             CloudBackup.mongoExporter(mongo.database())), layout.backups()));

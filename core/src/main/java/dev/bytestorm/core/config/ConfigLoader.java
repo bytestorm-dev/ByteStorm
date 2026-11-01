@@ -80,13 +80,20 @@ public final class ConfigLoader {
         if (config.mongo().database().isBlank()) {
             problems.add("mongo.database darf nicht leer sein");
         }
+        // Ohne Anmeldung läge der gesamte Zustand offen: nur starten, wenn der
+        // Betreiber das ausdrücklich zugesagt hat (§20).
+        if (!config.mongo().hasAuthentication() && !config.security().mongoAllowsInsecure()) {
+            problems.add("mongo.uri braucht einen Benutzer, z. B. mongodb://user:pass@host:27017 —"
+                    + " ohne Anmeldung nur mit security.allowInsecureMongo=true (nicht empfohlen)");
+        }
 
         String address = config.redis().address();
         if (!address.startsWith("redis://") && !address.startsWith("rediss://")) {
             problems.add("redis.address muss mit redis:// oder rediss:// beginnen");
         }
-        if (config.redis().password() == null) {
-            problems.add("redis.password ist Pflicht (Redis-Auth, §20)");
+        if (config.redis().password() == null && !config.security().redisAllowsInsecure()) {
+            problems.add("redis.password ist Pflicht (Redis-Auth, §20) —"
+                    + " ohne Passwort nur mit security.allowInsecureRedis=true (nicht empfohlen)");
         }
 
         if (config.runtime() == dev.bytestorm.proto.RuntimeType.DOCKER && config.docker().host().isBlank()) {

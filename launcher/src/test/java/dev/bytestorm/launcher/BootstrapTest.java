@@ -84,7 +84,7 @@ class BootstrapTest {
     @Test
     void failsOnInvalidConfigBeforeOpeningConnections() throws IOException {
         Path directory = temp.resolve("invalid");
-        writeConfig(directory, mongoUri(), uniqueDatabase(), "redis://127.0.0.1:6379", null);
+        writeConfig(directory, mongoUri(), uniqueDatabase(), "redis://127.0.0.1:6379", null, false);
 
         ConfigException error = assertThrows(ConfigException.class, () -> Bootstrap.start(directory));
 
@@ -96,7 +96,8 @@ class BootstrapTest {
         requireServers();
         Path directory = temp.resolve("cloud");
         String database = uniqueDatabase();
-        writeConfig(directory, mongoUri(), database, redisAddress(), redisPassword());
+        // Lokale Testserver ohne Mongo-Benutzer: die Zusage steht ausdrücklich in der Datei.
+        writeConfig(directory, mongoUri(), database, redisAddress(), redisPassword(), true);
 
         Bootstrap bootstrap = Bootstrap.start(directory);
         try {
@@ -145,7 +146,8 @@ class BootstrapTest {
         requireServers();
         Path directory = temp.resolve("service-run");
         String database = uniqueDatabase();
-        writeConfig(directory, mongoUri(), database, redisAddress(), redisPassword());
+        // Lokale Testserver ohne Mongo-Benutzer: die Zusage steht ausdrücklich in der Datei.
+        writeConfig(directory, mongoUri(), database, redisAddress(), redisPassword(), true);
         Path platformJar = temp.resolve("lifecycle-probe.jar");
         jarMainClass(platformJar, LifecycleProbe.class);
 
@@ -184,7 +186,8 @@ class BootstrapTest {
         requireServers();
         Path directory = temp.resolve("process");
         String database = uniqueDatabase();
-        writeConfig(directory, mongoUri(), database, redisAddress(), redisPassword());
+        // Lokale Testserver ohne Mongo-Benutzer: die Zusage steht ausdrücklich in der Datei.
+        writeConfig(directory, mongoUri(), database, redisAddress(), redisPassword(), true);
         Path stdout = directory.resolve("stdout.log");
         // Der Bootstrap wird aus lib/ geladen, nicht aus dem Classpath des Kindprozesses.
         jarClass(directory.resolve("lib"), "bootstrap.jar", Bootstrap.class);
@@ -288,15 +291,17 @@ class BootstrapTest {
     }
 
     private static void writeConfig(Path directory, String mongoUri, String database,
-                                    String redisAddress, String redisPassword) throws IOException {
+                                    String redisAddress, String redisPassword,
+                                    boolean allowInsecure) throws IOException {
         Files.createDirectories(directory.resolve("config"));
         String password = redisPassword == null ? "null" : "\"" + redisPassword + "\"";
         String json = """
                 {
                   "mongo": {"uri": "%s", "database": "%s"},
-                  "redis": {"address": "%s", "password": %s}
+                  "redis": {"address": "%s", "password": %s},
+                  "security": {"allowInsecure": %s}
                 }
-                """.formatted(mongoUri, database, redisAddress, password);
+                """.formatted(mongoUri, database, redisAddress, password, allowInsecure);
         Files.writeString(directory.resolve(Bootstrap.CONFIG_FILE), json);
     }
 

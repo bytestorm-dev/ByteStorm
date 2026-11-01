@@ -82,7 +82,7 @@ public final class ServiceCommandLine {
               updater versions|check|update    Cloud aktualisieren (updater help)
               backup [--out <datei>]|list      Mongo, config, templates und static sichern
               reload [config|groups]           Konfiguration und Gruppen-Cache neu laden
-              doctor [--fix]               Pfade, Ports, Java, Mongo/Redis und Forwarding prüfen
+              doctor [--fix]               Pfade, Ports, Java, Mongo/Redis, Forwarding und REST prüfen
               info                         Agent-Status und Ressourcen
               clear                        Terminal leeren
               shutdown                     Cloud geordnet beenden (Alias stop)

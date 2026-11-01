@@ -57,7 +57,8 @@ class FirstRunWizardTest {
 
         CloudConfig loaded = new ConfigLoader().load(file);
         assertEquals(written, loaded);
-        assertEquals("mongodb://db:27017", loaded.mongo().uri());
+        assertEquals("mongodb://admin:geheim@db:27017", loaded.mongo().uri(),
+                "der Wizard legt nur authentifizierte Zugänge an (§20)");
         assertEquals("cloud", loaded.mongo().database());
         assertEquals("geheim", loaded.redis().password());
         assertEquals(RuntimeType.PROCESS, loaded.runtime());
@@ -167,7 +168,7 @@ class FirstRunWizardTest {
         CloudConfig config = wizard(io).run(temp);
 
         assertEquals(2, mongoChecks.size());
-        assertEquals("mongodb://richtig:27017", config.mongo().uri());
+        assertEquals("mongodb://admin:geheim@richtig:27017", config.mongo().uri());
         assertTrue(io.notices().stream().anyMatch(message -> message.contains("MongoDB nicht erreichbar")),
                 io.notices().toString());
         assertEquals(2, io.asked().stream().filter("MongoDB-URI"::equals).count(),
@@ -338,7 +339,8 @@ class FirstRunWizardTest {
     private static ScriptedWizardIo configAnswers() {
         return new ScriptedWizardIo()
                 .answer("MongoDB-URI", "mongodb://db:27017")
-                .answer("MongoDB-Benutzer", "")
+                .answer("MongoDB-Benutzer", "admin")
+                .answer("MongoDB-Passwort", "geheim")
                 .answer("MongoDB-Datenbank", "cloud")
                 .answer("Redis-Adresse", "redis://cache:6379")
                 .answer("Redis-Passwort", "geheim")

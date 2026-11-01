@@ -234,7 +234,8 @@ class CloudStartupE2ETest {
                   "redis": {"address": "%s", "password": "%s"},
                   "ports": {"proxy": 25565, "serverStart": 30000},
                   "scaling": {"intervalSeconds": 3},
-                  "crash": {"maxRestarts": 0}
+                  "crash": {"maxRestarts": 0},
+                  "security": {"allowInsecure": true}
                 }
                 """.formatted(mongoUri, database, redisAddress, redisPassword);
         Files.writeString(directory.resolve(Bootstrap.CONFIG_FILE), json);

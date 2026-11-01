@@ -11,6 +11,7 @@ import dev.bytestorm.core.config.MongoSettings;
 import dev.bytestorm.core.config.PortSettings;
 import dev.bytestorm.core.config.ProxySettings;
 import dev.bytestorm.core.config.RedisSettings;
+import dev.bytestorm.core.config.SecuritySettings;
 import dev.bytestorm.core.config.ScalingSettings;
 import dev.bytestorm.core.mongo.model.ModuleConfig;
 import dev.bytestorm.proto.RuntimeType;
@@ -227,8 +228,12 @@ public final class FirstRunWizard {
                                 ? null
                                 : "Die MongoDB-URI muss mit mongodb:// oder mongodb+srv:// beginnen.")
                         .build(),
-                Question.text(MONGO_USER, "MongoDB-Benutzer (optional)")
-                        .description("Nur nötig, wenn die Datenbank eine Anmeldung verlangt.")
+                Question.text(MONGO_USER, "MongoDB-Benutzer")
+                        .description("Pflicht: Die Cloud verbindet sich nur mit Anmeldung (§20).")
+                        .required(true)
+                        .validate((value, answers) -> value.isBlank()
+                                ? "MongoDB-Benutzer ist Pflicht — ohne Anmeldung startet die Cloud nicht (§20)."
+                                : null)
                         .build(),
                 Question.secret(MONGO_PASSWORD, "MongoDB-Passwort")
                         .description("Wird zusammen mit dem Benutzer prozentkodiert in die URI gesetzt.")
@@ -348,7 +353,9 @@ public final class FirstRunWizard {
                 new ProxySettings(ProxySettings.generateSecret()),
                 new ModuleSettings(rest, answers.flag(DISCORD)),
                 new ScalingSettings(0),
-                new CrashSettings(0, null));
+                new CrashSettings(0, null),
+                // Der Wizard liefert immer eine authentifizierte Konfiguration.
+                SecuritySettings.defaults());
     }
 
     /**

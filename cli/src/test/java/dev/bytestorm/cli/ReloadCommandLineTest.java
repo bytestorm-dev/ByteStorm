@@ -36,7 +36,7 @@ class ReloadCommandLineTest {
 
     @BeforeEach
     void setUp() throws IOException, ConfigException {
-        Path file = writeConfig("mongodb://localhost:27017");
+        Path file = writeConfig("mongodb://user:pass@localhost:27017");
         stored.put("Lobby", ServiceGroup.newBuilder().setName("Lobby").setPlatform("paper").build());
         GroupManager groups = new GroupManager(new FakeStore(), new FakeCache(),
                 new PortSettings(25565, 30000), name -> true);
@@ -72,7 +72,7 @@ class ReloadCommandLineTest {
 
     @Test
     void changedConnectionDataAsksForARestartButStillReloadsTheCache() throws IOException {
-        writeConfig("mongodb://localhost:27018");
+        writeConfig("mongodb://user:pass@localhost:27018");
 
         String output = commandLine.execute(new String[]{"reload"});
 

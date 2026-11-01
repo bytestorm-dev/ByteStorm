@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * Prüft eine laufende Cloud und meldet, warum sie nicht so arbeitet wie erwartet
@@ -39,7 +40,10 @@ import java.util.function.Supplier;
  * nicht sichtbar werden: Sind alle Verzeichnisse da, passt der Java-Stand,
  * liegen Ports im Pool, antworten MongoDB und Redis, ist eine Adresse doppelt
  * belegt, sind Proxy-Gruppe und Fallback-Ziel überhaupt konfiguriert — und nutzen
- * Proxy und Backends dasselbe Forwarding-Secret (§14). Die
+ * Proxy und Backends dasselbe Forwarding-Secret (§14). Dazu kommt die
+ * Sicherheitsfrage: Laufen MongoDB und Redis mit Anmeldung, und liegen sie nur
+ * lokal beziehungsweise im privaten Netz — und steht die REST-API mit einem
+ * vollberechtigten Key nur auf Loopback (§20). Die
  * Klasse fasst nichts an: Sie liest Dateien und ruft die übergebenen
  * Verbindungsproben auf.
  */
@@ -94,6 +98,7 @@ public final class Doctor implements Diagnostics {
     private final Probe mongo;
     private final Probe redis;
     private final Repair repair;
+    private final Supplier<RestExposure> rest;
 
     /**
      * @param layout   Verzeichnislayout der Cloud
@@ -121,6 +126,22 @@ public final class Doctor implements Diagnostics {
     public Doctor(CloudLayout layout, Supplier<CloudConfig> config,
                   Supplier<List<ServiceGroup>> groups, Supplier<List<ServiceInfo>> services,
                   Probe mongo, Probe redis, Repair repair) {
+        this(layout, config, groups, services, mongo, redis, repair, null);
+    }
+
+    /**
+     * @param layout   Verzeichnislayout der Cloud
+     * @param config   aktive Konfiguration
+     * @param groups   Gruppen-Definitionen mit Plattform und Typ
+     * @param services registrierte Services
+     * @param mongo    Mongo-Prüfung
+     * @param redis    Redis-Prüfung
+     * @param repair   Reparatur für {@code --fix}, {@code null} wenn nicht verfügbar
+     * @param rest     Adresse und Keys des REST-Moduls, {@code null} wenn unbekannt
+     */
+    public Doctor(CloudLayout layout, Supplier<CloudConfig> config,
+                  Supplier<List<ServiceGroup>> groups, Supplier<List<ServiceInfo>> services,
+                  Probe mongo, Probe redis, Repair repair, Supplier<RestExposure> rest) {
         this.layout = Objects.requireNonNull(layout, "layout");
         this.config = Objects.requireNonNull(config, "config");
         this.groups = Objects.requireNonNull(groups, "groups");
@@ -128,6 +149,7 @@ public final class Doctor implements Diagnostics {
         this.mongo = Objects.requireNonNull(mongo, "mongo");
         this.redis = Objects.requireNonNull(redis, "redis");
         this.repair = repair;
+        this.rest = rest;
     }
 
     @Override
@@ -145,6 +167,8 @@ public final class Doctor implements Diagnostics {
         ports(findings, current, known);
         connection(findings, "MongoDB", mongo);
         connection(findings, "Redis", redis);
+        security(findings, current);
+        restApi(findings);
         addresses(findings, known);
         groups(findings, definitions);
         forwarding(findings, known, definitions, current.proxy().forwardingSecret());
@@ -310,6 +334,152 @@ public final class Doctor implements Diagnostics {
         } catch (RuntimeException e) {
             findings.add(new Finding(Severity.ERROR, area, messageOf(e)));
         }
+    }
+
+    /**
+     * Meldet Datenbanken ohne Anmeldung und solche, die nicht lokal liegen (§20).
+     *
+     * <p>Die Cloud kennt nur die konfigurierte Adresse, nicht die Firewall davor:
+     * Der Befund ist eine Einordnung, keine Messung. Ein einzelner Name wie
+     * {@code redis} gilt als Netznamen (Container, privates Netz), ein Name mit
+     * Punkt oder eine öffentliche Adresse als von außen erreichbar.
+     *
+     * @param findings gesammelte Befunde
+     * @param current  aktive Konfiguration
+     */
+    private static void security(List<Finding> findings, CloudConfig current) {
+        datastore(findings, "MongoDB", current.mongo().host(),
+                current.mongo().hasAuthentication(),
+                current.security().mongoAllowsInsecure(), "security.allowInsecureMongo");
+        datastore(findings, "Redis", current.redis().host(),
+                current.redis().password() != null,
+                current.security().redisAllowsInsecure(), "security.allowInsecureRedis");
+    }
+
+    private static void datastore(List<Finding> findings, String area, String host,
+                                  boolean authenticated, boolean insecure, String setting) {
+        Reach reach = reach(host);
+        if (!authenticated || insecure) {
+            String state = insecure ? "ohne Anmeldung (" + setting + ")" : "ohne Anmeldung";
+            if (reach == Reach.LOCAL) {
+                findings.add(new Finding(Severity.WARNING, "Sicherheit",
+                        area + " " + state + " — nur zulässig, solange der Dienst ausschließlich"
+                                + " lokal lauscht"));
+            } else {
+                findings.add(new Finding(Severity.ERROR, "Sicherheit",
+                        area + " " + state + " auf " + host + " — von anderen Hosts erreichbar;"
+                                + " Anmeldung setzen oder den Port per Firewall sperren"));
+            }
+            return;
+        }
+        if (reach == Reach.PUBLIC) {
+            findings.add(new Finding(Severity.WARNING, "Sicherheit",
+                    area + " auf " + host + " — nicht als lokal erkennbar; Firewall und TLS prüfen,"
+                            + " damit der Port nicht von außen erreichbar ist"));
+            return;
+        }
+        findings.add(new Finding(Severity.OK, "Sicherheit",
+                area + (reach == Reach.LOCAL ? " nur lokal (" : " im privaten Netz (")
+                        + host + ") und mit Anmeldung"));
+    }
+
+    /**
+     * @param host konfigurierter Host einer Datenbank
+     * @return die Einordnung der Adresse
+     */
+    private static Reach reach(String host) {
+        String value = host == null ? "" : host.trim().toLowerCase(Locale.ROOT);
+        if (value.equals("localhost") || value.startsWith("127.") || value.equals("::1")) {
+            return Reach.LOCAL;
+        }
+        if (value.startsWith("10.") || value.startsWith("192.168.")) {
+            return Reach.PRIVATE;
+        }
+        if (value.startsWith("172.")) {
+            String[] parts = value.split("\\.");
+            if (parts.length > 1) {
+                try {
+                    int second = Integer.parseInt(parts[1]);
+                    if (second >= 16 && second <= 31) {
+                        return Reach.PRIVATE;
+                    }
+                } catch (NumberFormatException ignored) {
+                    // kein Zahlenteil — die Entscheidung fällt unten
+                }
+            }
+            return Reach.PUBLIC;
+        }
+        if (value.contains(":")) {
+            // IPv6 außer ::1 (oben) und Unique Local Addresses fc00::/7.
+            return value.startsWith("fc") || value.startsWith("fd") ? Reach.PRIVATE : Reach.PUBLIC;
+        }
+        if (!value.contains(".")) {
+            // Einzelner Name wie 'redis' oder 'mongo': Container- oder Netznamen.
+            return Reach.PRIVATE;
+        }
+        return Reach.PUBLIC;
+    }
+
+    /** Lage einer Datenbank aus Sicht der Cloud. */
+    private enum Reach {
+        LOCAL, PRIVATE, PUBLIC
+    }
+
+    /**
+     * Meldet eine REST-API, die von außen erreichbar ist und zugleich einen Key
+     * mit vollem Zugriff hat (§11, §20).
+     *
+     * <p>Ein voller Key ist für einen Betreiber bequem, steht aber in jeder
+     * Client-Konfiguration. Loopback ist die Voreinstellung des Moduls; ein anderer
+     * Host ist deshalb eine bewusste Entscheidung und ohne TLS-Proxy davor eine
+     * Warnung, kein Fehler. Erkannt wird nur die konfigurierte Adresse — ob die
+     * Firewall davor steht, weiß die Cloud nicht.
+     *
+     * @param findings gesammelte Befunde
+     */
+    private void restApi(List<Finding> findings) {
+        RestExposure exposure;
+        try {
+            exposure = rest == null ? null : rest.get();
+        } catch (RuntimeException e) {
+            findings.add(new Finding(Severity.WARNING, "REST",
+                    "Modul-Einstellungen nicht lesbar: " + messageOf(e)));
+            return;
+        }
+        if (exposure == null || !exposure.enabled()) {
+            findings.add(new Finding(Severity.OK, "REST",
+                    "Modul nicht aktiv — keine API von außen erreichbar"));
+            return;
+        }
+        String endpoint = exposure.endpoint();
+        List<String> admin = exposure.adminKeys();
+        if (admin.isEmpty()) {
+            findings.add(new Finding(Severity.OK, "REST",
+                    endpoint + " — kein Key mit vollem Zugriff"));
+            return;
+        }
+        String keys = adminKeysText(admin);
+        if (exposure.loopback()) {
+            findings.add(new Finding(Severity.OK, "REST",
+                    "nur lokal (" + endpoint + ") — " + keys
+                            + ", von außen aber nicht erreichbar"));
+            return;
+        }
+        findings.add(new Finding(Severity.WARNING, "REST",
+                endpoint + (exposure.allInterfaces() ? " (alle Adressen)" : "")
+                        + " — " + keys + "; host auf " + RestExposure.DEFAULT_HOST
+                        + " beschränken oder scopes.<key> vergeben, sonst nur mit TLS-Proxy davor"));
+    }
+
+    /**
+     * @param keys Namen der vollberechtigten Keys
+     * @return z. B. {@code Key 'apiKey' hat vollen Zugriff (*)}
+     */
+    private static String adminKeysText(List<String> keys) {
+        String quoted = keys.stream().map(key -> "'" + key + "'")
+                .collect(Collectors.joining(", "));
+        return (keys.size() == 1 ? "Key " + quoted + " hat vollen Zugriff (*)"
+                : "Keys " + quoted + " haben vollen Zugriff (*)");
     }
 
     private void addresses(List<Finding> findings, List<ServiceInfo> known) {

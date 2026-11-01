@@ -1,7 +1,11 @@
 package dev.bytestorm.launcher.doctor;
 
+import dev.bytestorm.api.module.AccessGrant;
 import dev.bytestorm.cli.Diagnostics;
 import dev.bytestorm.core.config.CloudConfig;
+import dev.bytestorm.core.config.MongoSettings;
+import dev.bytestorm.core.config.RedisSettings;
+import dev.bytestorm.core.config.SecuritySettings;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.node.template.ForwardingCheck;
 import dev.bytestorm.node.template.TemplatePreparer;
@@ -382,6 +386,130 @@ class DoctorTest {
         List<Diagnostics.Finding> findings = doctor.run();
 
         assertTrue(has(findings, "Gruppen", "Proxy 'Proxy', Fallback 'Lobby'"), findings.toString());
+    }
+
+    @Test
+    void anInsecureLocalDatastoreIsAWarning() {
+        CloudLayout layout = new CloudLayout(root);
+        List<Diagnostics.Finding> findings = new Doctor(layout,
+                () -> config(new MongoSettings("mongodb://user:pass@127.0.0.1:27017", "db"),
+                        new RedisSettings("redis://localhost:6379", null),
+                        new SecuritySettings(false, null, true)),
+                () -> List.of(), () -> List.of(), () -> "ok", () -> "ok").run();
+
+        assertTrue(has(findings, "Sicherheit",
+                "Redis ohne Anmeldung (security.allowInsecureRedis)"), findings.toString());
+        assertTrue(has(findings, "Sicherheit",
+                "MongoDB nur lokal (127.0.0.1) und mit Anmeldung"), findings.toString());
+        assertTrue(findings.stream().filter(finding -> finding.area().equals("Sicherheit"))
+                .noneMatch(finding -> finding.severity() == Diagnostics.Severity.ERROR),
+                findings.toString());
+    }
+
+    @Test
+    void anInsecureDatastoreOutsideLocalhostIsAnError() {
+        CloudLayout layout = new CloudLayout(root);
+        List<Diagnostics.Finding> findings = new Doctor(layout,
+                () -> config(new MongoSettings("mongodb://localhost:27017", "db"),
+                        new RedisSettings("redis://10.0.0.5:6379", null),
+                        new SecuritySettings(true, null, null)),
+                () -> List.of(), () -> List.of(), () -> "ok", () -> "ok").run();
+
+        assertTrue(has(findings, "Sicherheit",
+                "Redis ohne Anmeldung (security.allowInsecureRedis) auf 10.0.0.5"),
+                findings.toString());
+        assertTrue(has(findings, "Sicherheit",
+                "MongoDB ohne Anmeldung (security.allowInsecureMongo)"), findings.toString());
+        assertTrue(findings.stream().anyMatch(finding -> finding.area().equals("Sicherheit")
+                && finding.severity() == Diagnostics.Severity.ERROR), findings.toString());
+    }
+
+    @Test
+    void aPublicDatastoreAddressIsAWarning() {
+        CloudLayout layout = new CloudLayout(root);
+        List<Diagnostics.Finding> findings = new Doctor(layout,
+                () -> config(new MongoSettings("mongodb://user:pass@db.example.com:27017", "db"),
+                        new RedisSettings("redis://10.0.0.5:6379", "geheim"),
+                        SecuritySettings.defaults()),
+                () -> List.of(), () -> List.of(), () -> "ok", () -> "ok").run();
+
+        assertTrue(has(findings, "Sicherheit",
+                "MongoDB auf db.example.com — nicht als lokal erkennbar"), findings.toString());
+        assertTrue(has(findings, "Sicherheit",
+                "Redis im privaten Netz (10.0.0.5) und mit Anmeldung"), findings.toString());
+        assertTrue(findings.stream().filter(finding -> finding.area().equals("Sicherheit"))
+                .noneMatch(finding -> finding.severity() == Diagnostics.Severity.ERROR),
+                findings.toString());
+    }
+
+    @Test
+    void aDatastoreWithoutCredentialsIsReportedEvenWithoutTheException() {
+        CloudLayout layout = new CloudLayout(root);
+        List<Diagnostics.Finding> findings = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(), () -> List.of(), () -> "ok", () -> "ok").run();
+
+        assertTrue(has(findings, "Sicherheit", "MongoDB ohne Anmeldung"), findings.toString());
+        assertTrue(has(findings, "Sicherheit", "Redis ohne Anmeldung"), findings.toString());
+    }
+
+    @Test
+    void aRestApiOnAllInterfacesWithAFullKeyIsAWarning() {
+        CloudLayout layout = new CloudLayout(root);
+        List<Diagnostics.Finding> findings = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(), () -> List.of(), () -> "ok", () -> "ok", null,
+                () -> new RestExposure(true, "0.0.0.0", 8080,
+                        List.of(new AccessGrant("apiKey", true, List.of("*"))))).run();
+
+        assertTrue(has(findings, "REST", "0.0.0.0:8080 (alle Adressen)"), findings.toString());
+        assertTrue(has(findings, "REST", "Key 'apiKey' hat vollen Zugriff (*)"), findings.toString());
+        assertTrue(findings.stream().anyMatch(finding -> finding.area().equals("REST")
+                && finding.severity() == Diagnostics.Severity.WARNING), findings.toString());
+    }
+
+    @Test
+    void aRestApiOnLoopbackWithAFullKeyIsFine() {
+        CloudLayout layout = new CloudLayout(root);
+        List<Diagnostics.Finding> findings = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(), () -> List.of(), () -> "ok", () -> "ok", null,
+                () -> new RestExposure(true, "localhost", 8080,
+                        List.of(new AccessGrant("apiKey", true, List.of("*"))))).run();
+
+        assertTrue(has(findings, "REST", "nur lokal (localhost:8080)"), findings.toString());
+        assertFalse(findings.stream().anyMatch(finding -> finding.area().equals("REST")
+                && finding.severity() == Diagnostics.Severity.WARNING), findings.toString());
+    }
+
+    @Test
+    void aRestApiWithOnlyScopedKeysMayListenOnAllInterfaces() {
+        CloudLayout layout = new CloudLayout(root);
+        List<Diagnostics.Finding> findings = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(), () -> List.of(), () -> "ok", () -> "ok", null,
+                () -> new RestExposure(true, "0.0.0.0", 8080,
+                        List.of(new AccessGrant("monitoring", false,
+                                List.of("monitoring.read", "services.read"))))).run();
+
+        assertTrue(has(findings, "REST", "0.0.0.0:8080 — kein Key mit vollem Zugriff"),
+                findings.toString());
+        assertFalse(findings.stream().anyMatch(finding -> finding.area().equals("REST")
+                && finding.severity() == Diagnostics.Severity.WARNING), findings.toString());
+    }
+
+    @Test
+    void anInactiveRestModuleIsNotReportedAsExposed() {
+        CloudLayout layout = new CloudLayout(root);
+        List<Diagnostics.Finding> findings = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(), () -> List.of(), () -> "ok", () -> "ok", null,
+                () -> new RestExposure(false, "0.0.0.0", 8080,
+                        List.of(new AccessGrant("apiKey", true, List.of("*"))))).run();
+
+        assertTrue(has(findings, "REST", "Modul nicht aktiv"), findings.toString());
+        assertFalse(findings.stream().anyMatch(finding -> finding.area().equals("REST")
+                && finding.severity() == Diagnostics.Severity.WARNING), findings.toString());
+    }
+
+    private static CloudConfig config(MongoSettings mongo, RedisSettings redis,
+                                      SecuritySettings security) {
+        return new CloudConfig(mongo, redis, null, null, null, null, null, null, null, security);
     }
 
     private static ServiceGroup proxyGroup() {

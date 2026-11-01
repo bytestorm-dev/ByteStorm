@@ -32,8 +32,8 @@ class ConfigTest {
 
     @Test
     void emptyObjectYieldsDefaults() throws Exception {
-        // redis.password ist Pflicht (§20), alles andere fällt auf Defaults zurück.
-        CloudConfig config = loader.parse("{ \"redis\": { \"password\": \"x\" } }");
+        // Ohne Authentifizierung startet die Cloud nur mit ausdrücklicher Zusage (§20).
+        CloudConfig config = loader.parse("{ \"security\": { \"allowInsecure\": true } }");
 
         assertEquals(MongoSettings.DEFAULT_URI, config.mongo().uri());
         assertEquals(MongoSettings.DEFAULT_DATABASE, config.mongo().database());
@@ -61,12 +61,13 @@ class ConfigTest {
         assertEquals(4, config.scaling().intervalSeconds());
         assertEquals(2, config.crash().maxRestarts());
         assertEquals(15, config.crash().backoffFor(9), "letzter Backoff wird wiederholt");
+        assertFalse(config.security().allowInsecure(), "ohne Angabe ist Authentifizierung Pflicht");
     }
 
     @Test
     void unknownFieldsAreIgnored() throws Exception {
         CloudConfig config = loader.parse("""
-                { "redis": { "password": "x" }, "futureOption": { "nested": 1 } }
+                { "security": { "allowInsecure": true }, "futureOption": { "nested": 1 } }
                 """);
 
         assertEquals(MongoSettings.DEFAULT_URI, config.mongo().uri());
@@ -77,6 +78,88 @@ class ConfigTest {
         ConfigException error = assertThrows(ConfigException.class, () -> loader.parse("{}"));
 
         assertTrue(error.getMessage().contains("redis.password"), error.getMessage());
+        assertTrue(error.getMessage().contains("security.allowInsecure"),
+                "die Meldung nennt den Weg für eine bewusste Ausnahme: " + error.getMessage());
+    }
+
+    @Test
+    void mongoWithoutAuthenticationIsRejected() {
+        ConfigException error = assertThrows(ConfigException.class,
+                () -> loader.parse("""
+                        { "redis": { "password": "x" } }
+                        """));
+
+        assertTrue(error.getMessage().contains("mongo.uri"), error.getMessage());
+        assertTrue(error.getMessage().contains("security.allowInsecure"), error.getMessage());
+    }
+
+    @Test
+    void allowInsecureLetsBothStartWithoutAuthentication() throws Exception {
+        CloudConfig config = loader.parse("{ \"security\": { \"allowInsecure\": true } }");
+
+        assertTrue(config.security().allowInsecure());
+        assertNull(config.redis().password());
+        assertFalse(config.mongo().hasAuthentication());
+    }
+
+    @Test
+    void theExceptionIsGranularPerDatastore() throws Exception {
+        CloudConfig redisOnly = loader.parse("""
+                { "mongo": { "uri": "mongodb://user:pass@localhost:27017" },
+                  "security": { "allowInsecureRedis": true } }
+                """);
+        assertNull(redisOnly.redis().password(), "Redis darf lokal ohne Passwort laufen");
+        assertTrue(redisOnly.security().redisAllowsInsecure());
+        assertFalse(redisOnly.security().mongoAllowsInsecure());
+
+        ConfigException mongoStillRequired = assertThrows(ConfigException.class,
+                () -> loader.parse("""
+                        { "redis": { "password": "x" },
+                          "security": { "allowInsecureRedis": true } }
+                        """));
+        assertTrue(mongoStillRequired.getMessage().contains("mongo.uri"),
+                mongoStillRequired.getMessage());
+        assertFalse(mongoStillRequired.getMessage().contains("redis.password"),
+                "Redis ist hier ausdrücklich erlaubt: " + mongoStillRequired.getMessage());
+
+        CloudConfig mongoOnly = loader.parse("""
+                { "mongo": { "uri": "mongodb://localhost:27017" },
+                  "redis": { "password": "x" },
+                  "security": { "allowInsecureMongo": true } }
+                """);
+        assertTrue(mongoOnly.security().mongoAllowsInsecure());
+        assertFalse(mongoOnly.security().redisAllowsInsecure());
+    }
+
+    @Test
+    void theMasterFlagAppliesWhenTheSpecificOneIsMissing() throws Exception {
+        CloudConfig config = loader.parse("""
+                { "mongo": { "uri": "mongodb://user:pass@localhost:27017" },
+                  "security": { "allowInsecure": true, "allowInsecureMongo": false } }
+                """);
+
+        assertFalse(config.security().mongoAllowsInsecure(), "der Einzelwert hat Vorrang");
+        assertTrue(config.security().redisAllowsInsecure(), "sonst gilt der gemeinsame Schalter");
+    }
+
+    @Test
+    void theHostIsReadFromBothAddresses() {
+        assertEquals("host", new MongoSettings("mongodb://user:pass@host:27017", "db").host());
+        assertEquals("localhost",
+                new MongoSettings("mongodb://localhost:27017/db?authSource=admin", "db").host());
+        assertEquals("redis", new RedisSettings("redis://redis:6379", "x").host());
+        assertEquals("::1", new RedisSettings("redis://[::1]:6379", "x").host());
+        assertEquals("cache", new RedisSettings("rediss://:geheim@cache:6380/0", "x").host());
+    }
+
+    @Test
+    void mongoCredentialsAreReadFromTheUri() {
+        assertTrue(new MongoSettings("mongodb://user:pass@host:27017", "db").hasAuthentication());
+        assertTrue(new MongoSettings("mongodb+srv://user@cluster/db?authMechanism=MONGODB-X509", "db")
+                .hasAuthentication(), "Anmeldung ohne Passwort gilt auch");
+        assertFalse(new MongoSettings("mongodb://localhost:27017", "db").hasAuthentication());
+        assertFalse(new MongoSettings("mongodb://host:27017/?authSource=admin", "db").hasAuthentication(),
+                "ein Query-Parameter ist kein Benutzer");
     }
 
     @Test
@@ -93,7 +176,9 @@ class ConfigTest {
     void outOfRangePortsAreRejected() {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> loader.parse("""
-                        { "redis": { "password": "x" }, "ports": { "proxy": 70000, "serverStart": 30000 } }
+                        { "mongo": { "uri": "mongodb://user:pass@localhost:27017" },
+                          "redis": { "password": "x" },
+                          "ports": { "proxy": 70000, "serverStart": 30000 } }
                         """));
 
         assertTrue(error.getMessage().contains("ports.proxy"), error.getMessage());
@@ -103,7 +188,8 @@ class ConfigTest {
     void negativeBackoffIsRejected() {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> loader.parse("""
-                        { "redis": { "password": "x" },
+                        { "mongo": { "uri": "mongodb://user:pass@localhost:27017" },
+                          "redis": { "password": "x" },
                           "crash": { "maxRestarts": 3, "backoffSeconds": [5, -1] } }
                         """));
 
@@ -193,7 +279,7 @@ class ConfigTest {
 
         assertFalse(settings.toString().contains("streng-geheim"), settings.toString());
         assertTrue(settings.toString().contains("***"));
-        assertEquals("streng-geheim", new CloudConfig(null, null, null, null, null, settings, null, null, null)
+        assertEquals("streng-geheim", new CloudConfig(null, null, null, null, null, settings, null, null, null, null)
                 .proxy().forwardingSecret(), "Redaktion betrifft nur die Ausgabe");
     }
 
