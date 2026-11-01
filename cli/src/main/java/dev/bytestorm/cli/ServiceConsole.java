@@ -94,6 +94,7 @@ public final class ServiceConsole implements AutoCloseable {
             "updater",
             "check",
             "reload",
+            "doctor",
             "exit",
             "quit",
             "shutdown",

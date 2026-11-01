@@ -1,0 +1,347 @@
+package dev.bytestorm.launcher.doctor;
+
+import dev.bytestorm.cli.Diagnostics;
+import dev.bytestorm.cli.Diagnostics.Finding;
+import dev.bytestorm.cli.Diagnostics.Severity;
+import dev.bytestorm.core.config.CloudConfig;
+import dev.bytestorm.core.config.PortSettings;
+import dev.bytestorm.launcher.layout.CloudLayout;
+import dev.bytestorm.launcher.layout.ServiceDirectories;
+import dev.bytestorm.node.template.ForwardingCheck;
+import dev.bytestorm.node.template.TemplateLayers;
+import dev.bytestorm.proto.RuntimeType;
+import dev.bytestorm.proto.ServiceInfo;
+import dev.bytestorm.proto.ServiceState;
+import dev.bytestorm.proto.ServiceType;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Supplier;
+
+/**
+ * Prüft eine laufende Cloud und meldet, warum sie nicht so arbeitet wie erwartet
+ * (§17).
+ *
+ * <p>Die Prüfungen decken die Fragen ab, die sonst erst im Backend-Log oder gar
+ * nicht sichtbar werden: Sind alle Verzeichnisse da, passt der Java-Stand,
+ * liegen Ports im Pool, antworten MongoDB und Redis, ist eine Adresse doppelt
+ * belegt — und nutzen Proxy und Backends dasselbe Forwarding-Secret (§14). Die
+ * Klasse fasst nichts an: Sie liest Dateien und ruft die übergebenen
+ * Verbindungsproben auf.
+ */
+public final class Doctor implements Diagnostics {
+
+    /** Kleinste Java-Version, mit der Paper 1.21 startet. */
+    public static final int MIN_JAVA = 21;
+
+    /** Probe, die eine Datenbank anspricht und ihr Ergebnis beschreibt. */
+    @FunctionalInterface
+    public interface Probe {
+
+        /**
+         * @return Kurzbeschreibung, z. B. {@code antwortet in 12 ms}
+         * @throws RuntimeException wenn die Verbindung fehlschlägt
+         */
+        String check() throws RuntimeException;
+    }
+
+    private final CloudLayout layout;
+    private final Supplier<CloudConfig> config;
+    private final Supplier<List<ServiceInfo>> services;
+    private final Probe mongo;
+    private final Probe redis;
+
+    /**
+     * @param layout   Verzeichnislayout der Cloud
+     * @param config   aktive Konfiguration
+     * @param services registrierte Services
+     * @param mongo    Mongo-Prüfung
+     * @param redis    Redis-Prüfung
+     */
+    public Doctor(CloudLayout layout, Supplier<CloudConfig> config,
+                  Supplier<List<ServiceInfo>> services, Probe mongo, Probe redis) {
+        this.layout = Objects.requireNonNull(layout, "layout");
+        this.config = Objects.requireNonNull(config, "config");
+        this.services = Objects.requireNonNull(services, "services");
+        this.mongo = Objects.requireNonNull(mongo, "mongo");
+        this.redis = Objects.requireNonNull(redis, "redis");
+    }
+
+    @Override
+    public List<Finding> run() {
+        List<Finding> findings = new ArrayList<>();
+        CloudConfig current = config.get();
+        List<ServiceInfo> known = services.get();
+        paths(findings);
+        templates(findings);
+        java(findings, current);
+        ports(findings, current, known);
+        connection(findings, "MongoDB", mongo);
+        connection(findings, "Redis", redis);
+        addresses(findings, known);
+        forwarding(findings, known, current.proxy().forwardingSecret());
+        return List.copyOf(findings);
+    }
+
+    private void paths(List<Finding> findings) {
+        List<String> missing = new ArrayList<>();
+        List<String> unreadable = new ArrayList<>();
+        for (String directory : CloudLayout.DIRECTORIES) {
+            Path path = layout.root().resolve(directory);
+            if (!Files.isDirectory(path)) {
+                missing.add(directory);
+            } else if (!Files.isReadable(path)) {
+                unreadable.add(directory);
+            }
+        }
+        if (missing.isEmpty()) {
+            findings.add(new Finding(Severity.OK, "Pfade",
+                    CloudLayout.DIRECTORIES.size() + " Verzeichnisse vorhanden (" + layout.root() + ")"));
+        } else {
+            findings.add(new Finding(Severity.ERROR, "Pfade", "fehlen: " + String.join(", ", missing)));
+        }
+        if (!unreadable.isEmpty()) {
+            findings.add(new Finding(Severity.ERROR, "Pfade", "nicht lesbar: " + String.join(", ", unreadable)));
+        }
+        if (!Files.isWritable(layout.root())) {
+            findings.add(new Finding(Severity.ERROR, "Pfade",
+                    "Cloud-Verzeichnis ist nicht beschreibbar: " + layout.root()));
+        }
+    }
+
+    private void templates(List<Finding> findings) {
+        List<String> required = List.of(
+                TemplateLayers.PROXY + "/" + ForwardingCheck.VELOCITY_CONFIG,
+                TemplateLayers.PROXY + "/" + ForwardingCheck.DEFAULT_SECRET_FILE,
+                TemplateLayers.SERVER + "/" + ForwardingCheck.PAPER_CONFIG,
+                TemplateLayers.SERVER + "/server.properties");
+        List<String> missing = new ArrayList<>();
+        for (String relative : required) {
+            if (!Files.isRegularFile(layout.templates().resolve(relative))) {
+                missing.add(relative);
+            }
+        }
+        if (missing.isEmpty()) {
+            findings.add(new Finding(Severity.OK, "Templates", "Proxy- und Server-Template vollständig"));
+        } else {
+            findings.add(new Finding(Severity.WARNING, "Templates",
+                    "fehlen: " + String.join(", ", missing)
+                            + " — neue Services starten ohne Port/Forwarding"));
+        }
+    }
+
+    private void java(List<Finding> findings, CloudConfig current) {
+        int feature = Runtime.version().feature();
+        if (feature < MIN_JAVA) {
+            findings.add(new Finding(Severity.ERROR, "Java",
+                    "Cloud läuft mit Java " + feature + ", benötigt wird mindestens " + MIN_JAVA));
+        } else {
+            findings.add(new Finding(Severity.OK, "Java",
+                    Runtime.version() + " (mindestens " + MIN_JAVA + " nötig)"));
+        }
+        if (current.runtime() != RuntimeType.PROCESS) {
+            return;
+        }
+        Path bin = Path.of(System.getProperty("java.home"), "bin");
+        boolean executable = Files.isExecutable(bin.resolve("java")) || Files.isExecutable(bin.resolve("java.exe"));
+        findings.add(executable
+                ? new Finding(Severity.OK, "Java", "Service-Binary ausführbar: " + bin)
+                : new Finding(Severity.ERROR, "Java", "Service-Binary nicht ausführbar: " + bin));
+    }
+
+    private void ports(List<Finding> findings, CloudConfig current, List<ServiceInfo> known) {
+        PortSettings ports = current.ports();
+        List<String> problems = new ArrayList<>();
+        if (ports.proxy() < 1 || ports.proxy() > 65_535) {
+            problems.add("Proxy-Port außerhalb 1–65535: " + ports.proxy());
+        }
+        if (ports.serverStart() < 1 || ports.serverStart() > 65_535) {
+            problems.add("Server-Startport außerhalb 1–65535: " + ports.serverStart());
+        }
+        for (ServiceInfo info : known) {
+            if (info.getPort() <= 0) {
+                if (info.getState() == ServiceState.ONLINE) {
+                    problems.add(info.getName() + " ist ONLINE, hat aber keinen Port");
+                }
+                continue;
+            }
+            if (info.getType() == ServiceType.PROXY) {
+                if (info.getPort() != ports.proxy()) {
+                    problems.add(info.getName() + " läuft auf " + info.getPort()
+                            + ", konfiguriert ist " + ports.proxy());
+                }
+            } else if (info.getPort() < ports.serverStart()) {
+                problems.add(info.getName() + " läuft auf " + info.getPort()
+                        + ", der Pool beginnt bei " + ports.serverStart());
+            }
+        }
+        if (problems.isEmpty()) {
+            findings.add(new Finding(Severity.OK, "Ports",
+                    "Proxy " + ports.proxy() + ", Server ab " + ports.serverStart()
+                            + " — registrierte Ports passen"));
+        } else {
+            findings.add(new Finding(Severity.WARNING, "Ports", String.join("; ", problems)));
+        }
+    }
+
+    private static void connection(List<Finding> findings, String area, Probe probe) {
+        try {
+            findings.add(new Finding(Severity.OK, area, probe.check()));
+        } catch (RuntimeException e) {
+            findings.add(new Finding(Severity.ERROR, area, messageOf(e)));
+        }
+    }
+
+    private void addresses(List<Finding> findings, List<ServiceInfo> known) {
+        Map<String, List<String>> byAddress = new LinkedHashMap<>();
+        for (ServiceInfo info : known) {
+            if (info.getPort() <= 0) {
+                continue;
+            }
+            byAddress.computeIfAbsent(address(info.getHost(), info.getPort()),
+                    ignored -> new ArrayList<>()).add(info.getName());
+        }
+        List<String> duplicates = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : byAddress.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                duplicates.add(String.join(", ", entry.getValue()) + " → " + entry.getKey());
+            }
+        }
+        if (duplicates.isEmpty()) {
+            findings.add(new Finding(Severity.OK, "Adressen", "keine doppelt belegte Service-Adresse"));
+        } else {
+            findings.add(new Finding(Severity.ERROR, "Adressen",
+                    "mehrfach belegt: " + String.join("; ", duplicates)));
+        }
+        staleServerEntries(findings, known);
+    }
+
+    /**
+     * Ein Proxy führt in {@code velocity.toml} jeden Service unter seinem Namen.
+     * Bleibt dort ein alter Name auf derselben Adresse stehen, wechselt Velocity
+     * den Spieler endlos zwischen beiden Einträgen — genau das Fehlerbild, das
+     * die Bridge mit dem Adressvergleich abfängt (§14).
+     */
+    private void staleServerEntries(List<Finding> findings, List<ServiceInfo> known) {
+        Map<String, String> registry = new HashMap<>();
+        for (ServiceInfo info : known) {
+            if (info.getType() == ServiceType.SERVER && info.getPort() > 0) {
+                registry.put(address(info.getHost(), info.getPort()), info.getName());
+            }
+        }
+        List<String> stale = new ArrayList<>();
+        for (ServiceInfo proxy : known) {
+            if (proxy.getType() != ServiceType.PROXY) {
+                continue;
+            }
+            Optional<Path> directory = ServiceDirectories.directory(layout, proxy.getName());
+            if (directory.isEmpty()) {
+                continue;
+            }
+            try {
+                for (ForwardingCheck.ServerEntry entry : ForwardingCheck.readServers(directory.get())) {
+                    String owner = registry.get(normalizeAddress(entry.address()));
+                    if (owner != null && !owner.equalsIgnoreCase(entry.name())) {
+                        stale.add(proxy.getName() + ": '" + entry.name() + "' zeigt auf "
+                                + entry.address() + " (" + owner + ")");
+                    }
+                }
+            } catch (IOException e) {
+                findings.add(new Finding(Severity.WARNING, "Adressen",
+                        proxy.getName() + ": " + ForwardingCheck.VELOCITY_CONFIG
+                                + " nicht lesbar (" + e.getMessage() + ")"));
+            }
+        }
+        if (!stale.isEmpty()) {
+            findings.add(new Finding(Severity.WARNING, "Adressen",
+                    "veraltete Server-Einträge im Proxy: " + String.join("; ", stale)));
+        }
+    }
+
+    private void forwarding(List<Finding> findings, List<ServiceInfo> known, String secret) {
+        Map<String, Path> proxies = new LinkedHashMap<>();
+        Map<String, Path> backends = new LinkedHashMap<>();
+        List<String> withoutDirectory = new ArrayList<>();
+        for (ServiceInfo info : known) {
+            Optional<Path> directory = ServiceDirectories.directory(layout, info.getName());
+            if (directory.isEmpty()) {
+                if (info.getState() != ServiceState.STOPPED) {
+                    withoutDirectory.add(info.getName());
+                }
+                continue;
+            }
+            if (info.getType() == ServiceType.PROXY) {
+                proxies.put(info.getName(), directory.get());
+            } else {
+                backends.put(info.getName(), directory.get());
+            }
+        }
+        if (!withoutDirectory.isEmpty()) {
+            findings.add(new Finding(Severity.WARNING, "Services",
+                    "Ordner fehlt: " + String.join(", ", withoutDirectory)));
+        }
+        if (proxies.isEmpty() && backends.isEmpty()) {
+            findings.add(new Finding(Severity.WARNING, "Forwarding",
+                    "keine Service-Ordner gefunden — noch nichts gestartet?"));
+            return;
+        }
+
+        List<ForwardingCheck.Finding> mismatches = ForwardingCheck.compare(proxies, backends, secret);
+        if (mismatches.isEmpty()) {
+            findings.add(new Finding(Severity.OK, "Forwarding",
+                    proxies.size() + " Proxy(s) und " + backends.size()
+                            + " Backend(s) nutzen modernes Forwarding mit demselben Secret"));
+        } else {
+            for (ForwardingCheck.Finding mismatch : mismatches) {
+                findings.add(new Finding(
+                        mismatch.severity() == ForwardingCheck.Severity.ERROR
+                                ? Severity.ERROR : Severity.WARNING,
+                        "Forwarding",
+                        mismatch.service() + ": " + mismatch.message()));
+            }
+        }
+        if (proxies.isEmpty()) {
+            findings.add(new Finding(Severity.WARNING, "Forwarding",
+                    "kein Proxy gefunden — die Backends warten auf einen Proxy"));
+        }
+    }
+
+    private static String address(String host, int port) {
+        return normalizeHost(host) + ":" + port;
+    }
+
+    private static String normalizeAddress(String address) {
+        int colon = address.lastIndexOf(':');
+        if (colon <= 0) {
+            return address;
+        }
+        try {
+            return address(address.substring(0, colon).trim(),
+                    Integer.parseInt(address.substring(colon + 1).trim()));
+        } catch (NumberFormatException e) {
+            return address;
+        }
+    }
+
+    private static String normalizeHost(String host) {
+        String normalized = host == null ? "" : host.trim().toLowerCase(Locale.ROOT);
+        if (normalized.equals("localhost") || normalized.equals("::1") || normalized.equals("[::1]")) {
+            return "127.0.0.1";
+        }
+        return normalized;
+    }
+
+    private static String messageOf(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+    }
+}

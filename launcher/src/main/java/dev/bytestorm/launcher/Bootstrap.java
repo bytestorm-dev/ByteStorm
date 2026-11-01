@@ -44,6 +44,7 @@ import dev.bytestorm.core.redis.RedisProvider;
 import dev.bytestorm.core.redis.RedisUnavailableException;
 import dev.bytestorm.core.redis.ServiceReconciliation;
 import dev.bytestorm.launcher.api.DefaultByteStormApi;
+import dev.bytestorm.launcher.doctor.Doctor;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.launcher.layout.DefaultTemplates;
 import dev.bytestorm.launcher.layout.ServiceDirectories;
@@ -287,7 +288,10 @@ public final class Bootstrap implements AutoCloseable {
                             platformDownloader::availableVersions, platformDownloader::ensure),
                     new UpdaterCommandLine(updater),
                     // Dieselbe Messquelle wie das Scaling: CPU und RAM im Dashboard (§17).
-                    new SystemHostMetrics());
+                    new SystemHostMetrics(),
+                    // `doctor` prüft Pfade, Ports, Java, Datenbanken, Adressen und Forwarding (§14).
+                    new Doctor(layout, configService::current, controller::services,
+                            () -> timed(mongo::ping), () -> timed(redis::ping)));
             log.info("Node-ServiceManager bereit (Runtime {}, Logs {}, Scaling {} s)",
                     config.runtime(), layout.logs(), config.scaling().intervalSeconds());
 
@@ -536,6 +540,12 @@ public final class Bootstrap implements AutoCloseable {
                 throw new IllegalStateException("Java-Runtime nicht ausführbar: " + bin);
             }
         };
+    }
+
+    private static String timed(Runnable probe) {
+        long started = System.nanoTime();
+        probe.run();
+        return "antwortet in " + ((System.nanoTime() - started) / 1_000_000) + " ms";
     }
 
     private static HealthProbe dockerProbe(String host) {
