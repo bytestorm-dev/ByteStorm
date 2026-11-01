@@ -13,7 +13,9 @@ import dev.bytestorm.proto.ServiceType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +69,59 @@ class GroupCommandLineTest {
     }
 
     @Test
+    void createWithoutOptionsAsksTheWizard() {
+        ScriptedPrompt prompt = new ScriptedPrompt("PROXY", "STATIC", "velocity", "", "1", "1",
+                "4096", "ALL,PROXY");
+        cli.wizard(prompt);
+
+        String output = execute("group create Netz");
+
+        assertTrue(output.contains("Gruppe 'Netz' angelegt"), output);
+        ServiceGroup group = stored.get("Netz");
+        assertEquals(ServiceType.PROXY, group.getType());
+        assertEquals(ServiceMode.STATIC, group.getMode());
+        assertEquals("velocity", group.getPlatform());
+        assertEquals(4096, group.getMemory());
+        assertEquals(List.of("ALL", "PROXY"), group.getTemplatesList());
+        assertFalse(group.getFallback());
+        assertTrue(prompt.questions.get(0).contains("Typ"), prompt.questions.toString());
+    }
+
+    @Test
+    void anAbortedWizardCreatesNothing() {
+        ScriptedPrompt prompt = new ScriptedPrompt("SERVER", "<abort>");
+        cli.wizard(prompt);
+
+        String output = execute("group create Lobby");
+
+        assertTrue(output.contains("nicht angelegt"), output);
+        assertFalse(stored.containsKey("Lobby"));
+    }
+
+    @Test
+    void optionsSkipTheWizard() {
+        ScriptedPrompt prompt = new ScriptedPrompt();
+        cli.wizard(prompt);
+
+        execute("group create Lobby --platform paper");
+
+        assertTrue(prompt.questions.isEmpty(), prompt.questions.toString());
+        assertEquals("paper", stored.get("Lobby").getPlatform());
+    }
+
+    @Test
+    void theWizardIsNotStartedForAnExistingGroup() {
+        execute("group create Lobby --platform paper");
+        ScriptedPrompt prompt = new ScriptedPrompt("SERVER");
+        cli.wizard(prompt);
+
+        String output = execute("group create Lobby");
+
+        assertTrue(output.contains("existiert bereits"), output);
+        assertTrue(prompt.questions.isEmpty(), prompt.questions.toString());
+    }
+
+    @Test
     void createAppliesAllOptions() {
         execute("group create Survival --platform paper --version 1.21.4 --mode STATIC --min 2 --max 5"
                 + " --max-players 200 --memory 4096 --template ALL --template Survival --fallback"
@@ -87,6 +142,42 @@ class GroupCommandLineTest {
         assertEquals(RuntimeType.DOCKER, group.getRuntime());
         assertEquals(List.of("-XX:+UseZGC"), group.getJvmArgsList());
         assertEquals(List.of("--nogui"), group.getJavaArgsList());
+    }
+
+    @Test
+    void proxyPlatformInfersTheProxyRole() {
+        String output = execute("group create Proxy --platform velocity --mode STATIC --min 1 --max 1"
+                + " --max-players 256 --memory 1024 --no-fallback --runtime PROCESS");
+
+        assertTrue(output.contains("PROXY velocity"), output);
+        ServiceGroup group = stored.get("Proxy");
+        assertEquals(ServiceType.PROXY, group.getType());
+        assertEquals(ServiceMode.STATIC, group.getMode());
+    }
+
+    @Test
+    void proxyPlatformAlsoInfersTheStaticMode() {
+        execute("group create Proxy --platform velocity");
+
+        ServiceGroup group = stored.get("Proxy");
+        assertEquals(ServiceType.PROXY, group.getType());
+        assertEquals(ServiceMode.STATIC, group.getMode(), "ein Proxy belegt genau einen Port");
+    }
+
+    @Test
+    void aServerTypeOnAProxyPlatformIsRejected() {
+        String output = execute("group create Proxy --platform velocity --type SERVER");
+
+        assertTrue(output.contains("Proxy-Plattform"), output);
+        assertFalse(stored.containsKey("Proxy"));
+    }
+
+    @Test
+    void aProxyTypeOnAServerPlatformIsRejected() {
+        String output = execute("group create Proxy --platform paper --type PROXY");
+
+        assertTrue(output.contains("Proxy-Plattform"), output);
+        assertFalse(stored.containsKey("Proxy"));
     }
 
     @Test
@@ -302,6 +393,51 @@ class GroupCommandLineTest {
                 throw failure;
             }
             return decisions;
+        }
+    }
+
+    /**
+     * Beantwortet das Formular aus einer Liste; {@code <abort>} bricht ab.
+     */
+    private static final class ScriptedPrompt implements GroupWizard.Prompt {
+
+        private final Deque<String> answers;
+        private final List<String> questions = new ArrayList<>();
+
+        private ScriptedPrompt(String... answers) {
+            this.answers = new ArrayDeque<>(List.of(answers));
+        }
+
+        @Override
+        public Optional<String> ask(String question, String defaultValue) {
+            return next(question, defaultValue);
+        }
+
+        @Override
+        public Optional<String> choose(String question, List<String> options, String defaultValue) {
+            return next(question, defaultValue);
+        }
+
+        @Override
+        public Optional<Boolean> confirm(String question, boolean defaultValue) {
+            questions.add(question);
+            String answer = answers.poll();
+            if (answer == null) {
+                return Optional.of(defaultValue);
+            }
+            if (answer.equals("<abort>")) {
+                return Optional.empty();
+            }
+            return Optional.of(answer.equalsIgnoreCase("j") || answer.equalsIgnoreCase("y"));
+        }
+
+        private Optional<String> next(String question, String defaultValue) {
+            questions.add(question);
+            String answer = answers.poll();
+            if (answer == null) {
+                return Optional.of(defaultValue);
+            }
+            return answer.equals("<abort>") ? Optional.empty() : Optional.of(answer);
         }
     }
 

@@ -146,6 +146,8 @@ public final class ServiceConsole implements AutoCloseable {
             // und Tests muss sie schon beim Aufbau geladen sein.
             history.attach(this.reader);
         }
+        // `group create <name>` ohne Optionen fragt über denselben Reader (§17).
+        this.commandLine.groupWizard(new ConsoleGroupPrompt(terminal, this.reader));
     }
 
     /**

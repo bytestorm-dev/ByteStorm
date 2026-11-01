@@ -1,5 +1,6 @@
 package dev.bytestorm.cli;
 
+import dev.bytestorm.api.service.Platforms;
 import dev.bytestorm.controller.group.GroupManager;
 import dev.bytestorm.controller.group.GroupScaler;
 import dev.bytestorm.controller.group.GroupValidationException;
@@ -37,14 +38,14 @@ public final class GroupCommandLine {
     public static final String USAGE = """
             group list                       alle Gruppen
             group info <name>                Details einer Gruppe
-            group create <name> [optionen]   neue Gruppe (--platform ist Pflicht)
+            group create <name> [optionen]   neue Gruppe (ohne Optionen interaktiv)
             group edit <name> [optionen]     bestehende Gruppe ändern
             group delete <name>              Gruppe löschen
             group scale <name> <anzahl>      manuell auf <anzahl> Services bringen
             maintenance <name> on|off        Wartungsmodus schalten
 
             Optionen für create/edit:
-              --type PROXY|SERVER            Rolle (Default SERVER)
+              --type PROXY|SERVER            Rolle (Default SERVER, bei velocity automatisch PROXY)
               --platform <name>              Plattform, z. B. paper oder velocity
               --version <version>            Plattform-Version (leer = neueste stabile)
               --mode STATIC|DYNAMIC          Lebensdauer (Default DYNAMIC)
@@ -59,6 +60,9 @@ public final class GroupCommandLine {
               --runtime PROCESS|DOCKER       Runtime-Override der Gruppe
               --jvm-arg <arg>                JVM-Argument, mehrfach möglich
               --java-arg <arg>               Argument nach dem Plattform-Jar
+
+            Ohne Optionen fragt der Wizard Typ, Plattform, Modus, Servicezahl, Spieler,
+            Speicher, Fallback und Templates ab; mit Optionen bleibt die Zeile skriptbar.
             """;
 
     private static final String NL = System.lineSeparator();
@@ -82,6 +86,7 @@ public final class GroupCommandLine {
 
     private final GroupManager groups;
     private final GroupScaler scaler;
+    private GroupWizard.Prompt wizard;
 
     /**
      * @param groups Gruppen-Verwaltung; {@code group scale} bleibt ohne Skalierung
@@ -120,6 +125,15 @@ public final class GroupCommandLine {
      */
     public List<String> names() {
         return groupList().stream().map(ServiceGroup::getName).toList();
+    }
+
+    /**
+     * Hinterlegt den interaktiven Wizard für {@code group create <name>}.
+     *
+     * @param prompt Ein-/Ausgabe des Wizards, {@code null} schaltet ihn ab
+     */
+    void wizard(GroupWizard.Prompt prompt) {
+        this.wizard = prompt;
     }
 
     /**
@@ -213,10 +227,73 @@ public final class GroupCommandLine {
 
     private String create(String[] tokens) {
         if (tokens.length < 3) {
-            return Theme.warn("Gruppenname fehlt (group create <name> --platform <name>)");
+            return Theme.warn("Gruppenname fehlt (group create <name>)");
         }
         String name = tokens[2];
-        ServiceGroup.Builder builder = ServiceGroup.newBuilder()
+        if (tokens.length == 3 && wizard != null) {
+            return createWithWizard(name);
+        }
+        ServiceGroup.Builder builder = defaultBuilder(name);
+        try {
+            Map<String, List<String>> options = options(tokens, 3);
+            apply(builder, options);
+            inferProxyRole(builder, options);
+        } catch (IllegalArgumentException e) {
+            return Theme.fail("Fehler: " + e.getMessage());
+        }
+        return save(builder.build());
+    }
+
+    /**
+     * Eine Proxy-Plattform ohne {@code --type} wird zum Proxy statt zum Server mit
+     * Proxy-Jar. Ohne {@code --mode} passt STATIC dazu — ein Proxy belegt genau einen Port.
+     *
+     * @param builder  Definition aus den Optionen
+     * @param options  angegebene Optionen; ein ausdrückliches {@code --type} gewinnt
+     */
+    private static void inferProxyRole(ServiceGroup.Builder builder, Map<String, List<String>> options) {
+        if (options.containsKey("type") || !Platforms.isProxy(builder.getPlatform())) {
+            return;
+        }
+        builder.setType(ServiceType.PROXY);
+        if (!options.containsKey("mode")) {
+            builder.setMode(ServiceMode.STATIC);
+        }
+    }
+
+    /**
+     * Fragt die Gruppe interaktiv ab und legt sie an. Ein Abbruch legt nichts an.
+     *
+     * @param name Name der neuen Gruppe
+     * @return Ergebnis für das Terminal
+     */
+    private String createWithWizard(String name) {
+        if (groups.get(name).isPresent()) {
+            return Theme.fail("Fehler: Gruppe '" + name + "' existiert bereits.");
+        }
+        Optional<GroupWizard.Draft> draft = GroupWizard.collect(wizard, name);
+        if (draft.isEmpty()) {
+            return Theme.warn("Gruppe '" + name + "' nicht angelegt — Wizard abgebrochen.");
+        }
+        GroupWizard.Draft values = draft.get();
+        ServiceGroup group = defaultBuilder(name)
+                .setType(values.type())
+                .setMode(values.mode())
+                .setPlatform(values.platform())
+                .setVersion(values.version())
+                .setMinServices(values.minServices())
+                .setMaxServices(values.maxServices())
+                .setMaxPlayers(values.maxPlayers())
+                .setMemory(values.memory())
+                .setFallback(values.fallback())
+                .setFallbackPriority(values.fallbackPriority())
+                .addAllTemplates(values.templates())
+                .build();
+        return save(group);
+    }
+
+    private static ServiceGroup.Builder defaultBuilder(String name) {
+        return ServiceGroup.newBuilder()
                 .setName(name)
                 .setType(ServiceType.SERVER)
                 .setMode(ServiceMode.DYNAMIC)
@@ -224,13 +301,11 @@ public final class GroupCommandLine {
                 .setMaxServices(DEFAULT_MAX_SERVICES)
                 .setMaxPlayers(DEFAULT_MAX_PLAYERS)
                 .setMemory(DEFAULT_MEMORY_MB);
+    }
+
+    private String save(ServiceGroup group) {
         try {
-            apply(builder, options(tokens, 3));
-        } catch (IllegalArgumentException e) {
-            return Theme.fail("Fehler: " + e.getMessage());
-        }
-        try {
-            ServiceGroup created = groups.create(builder.build());
+            ServiceGroup created = groups.create(group);
             return Theme.ok("Gruppe '" + created.getName() + "' angelegt: " + summary(created));
         } catch (GroupValidationException e) {
             return Theme.fail("Fehler: " + e.getMessage());

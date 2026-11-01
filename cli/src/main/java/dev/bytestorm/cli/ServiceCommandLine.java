@@ -499,6 +499,17 @@ public final class ServiceCommandLine {
     }
 
     /**
+     * Hinterlegt den interaktiven Wizard für {@code group create <name>}.
+     *
+     * @param prompt Ein-/Ausgabe des Wizards, {@code null} schaltet ihn ab
+     */
+    public void groupWizard(GroupWizard.Prompt prompt) {
+        if (groups != null) {
+            groups.wizard(prompt);
+        }
+    }
+
+    /**
      * @return die Templatenamen für die Tab-Vervollständigung, leer ohne Template-Kommandos
      */
     public List<String> templateNames() {
