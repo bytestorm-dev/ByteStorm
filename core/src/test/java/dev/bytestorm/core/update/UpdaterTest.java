@@ -97,6 +97,15 @@ class UpdaterTest {
     }
 
     @Test
+    void newerThanComparesWithTheRunningVersion() {
+        assertEquals("v1.1", updater.newerThan("1.0").orElseThrow().tag());
+        assertTrue(updater.newerThan("1.1").isEmpty(), "gleiche Version ist kein Update");
+        assertTrue(updater.newerThan("2.0-SNAPSHOT").isEmpty(),
+                "ein neuerer Entwicklungsstand wird nicht als veraltet gemeldet");
+        assertTrue(updater.newerThan("").isEmpty());
+    }
+
+    @Test
     void installReplacesTheDistributionAndKeepsABackup() throws IOException {
         int files = updater.install(updater.latest().orElseThrow());
 

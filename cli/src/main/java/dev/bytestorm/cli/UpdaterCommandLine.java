@@ -124,7 +124,7 @@ public final class UpdaterCommandLine {
             }
             Updater.Release release = newest.get();
             Optional<String> running = version.current();
-            if (running.isPresent() && running.get().equals(release.version())) {
+            if (running.isPresent() && !CloudVersion.isNewer(release.version(), running.get())) {
                 return Theme.ok("Aktuell: " + running.get());
             }
             String own = running.orElse(CloudVersion.UNKNOWN);

@@ -46,13 +46,13 @@ import java.util.zip.ZipInputStream;
 public final class Updater {
 
     /** Repository mit den Releases, wenn nichts anderes angegeben wird. */
-    public static final String DEFAULT_REPOSITORY = "bytestorm/ByteStorm";
+    public static final String DEFAULT_REPOSITORY = "mzcydev/ByteStorm";
 
     /** Basis der GitHub-API. */
     public static final URI DEFAULT_API = URI.create("https://api.github.com");
 
     /** User-Agent; die GitHub-API weist Anfragen ohne ihn ab. */
-    public static final String USER_AGENT = "ByteStorm-Cloud (+https://github.com/bytestorm/ByteStorm)";
+    public static final String USER_AGENT = "ByteStorm-Cloud (+https://github.com/mzcydev/ByteStorm)";
 
     /** Dateiname des Einstiegs-Jars in der Distribution. */
     public static final String LAUNCHER_JAR = "bytestorm.jar";
@@ -163,6 +163,23 @@ public final class Updater {
         return releases().stream()
                 .filter(release -> release.version().equalsIgnoreCase(wanted))
                 .findFirst();
+    }
+
+    /**
+     * Sucht ein Release, das neuer als die laufende Version ist.
+     *
+     * <p>Der Vergleich verhindert die falsche Meldung „Update verfügbar“, wenn
+     * ein Entwicklungsstand (etwa {@code 2.0-SNAPSHOT}) neuer als das letzte
+     * veröffentlichte Release ist.
+     *
+     * @param runningVersion laufende Version, mit oder ohne führendes {@code v}
+     * @return das neueste Release, das neuer ist, sonst leer
+     */
+    public Optional<Release> newerThan(String runningVersion) {
+        if (runningVersion == null || runningVersion.isBlank()) {
+            return Optional.empty();
+        }
+        return latest().filter(release -> CloudVersion.isNewer(release.version(), runningVersion));
     }
 
     /**

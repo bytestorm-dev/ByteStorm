@@ -83,6 +83,9 @@ class UpdaterCommandLineTest {
         String old = commandLine("1.0").execute(new String[]{"updater", "check"});
         assertTrue(old.contains("Update verfügbar: 1.0 → v1.1"), old);
         assertTrue(old.contains("updater update"), old);
+
+        // Ein neuerer Entwicklungsstand ist kein veralteter Stand.
+        assertTrue(commandLine("9.0").execute(new String[]{"updater", "check"}).contains("Aktuell: 9.0"));
     }
 
     @Test
