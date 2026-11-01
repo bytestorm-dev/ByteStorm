@@ -100,6 +100,35 @@ class ServiceLogsTest {
         assertTrue(content.contains("new"));
     }
 
+    @Test
+    void rotatesTheLogWhenItGrowsBeyondTheLimit() throws IOException {
+        Path logDirectory = temp.resolve("logs/Lobby-1");
+        ServiceLogs logs = new ServiceLogs("Lobby-1", logDirectory, 10, new LogPublisher() {
+            @Override
+            public void publish(LogLine line) {
+                published.add(line);
+            }
+
+            @Override
+            public void close() {
+                publisherClosed.set(true);
+            }
+        }, 200);
+
+        for (int i = 0; i < 20; i++) {
+            logs.accept("OUT", "line-" + i);
+        }
+        logs.close();
+
+        Path rotated = logDirectory.resolve("latest.log.1");
+        assertTrue(Files.exists(rotated), "alte Zeilen landen in der gedrehten Datei");
+        assertTrue(Files.size(logDirectory.resolve("latest.log")) <= 200,
+                "latest.log bleibt unter der Grenze");
+        assertTrue(Files.readString(logDirectory.resolve("latest.log")).contains("line-19"),
+                "die neuesten Zeilen bleiben im aktuellen Log");
+        assertFalse(Files.readString(rotated).isBlank(), "die Drehung enthält die Zeilen davor");
+    }
+
     private ServiceLogs logs(int ringSize) throws IOException {
         return new ServiceLogs("Lobby-1", temp.resolve("logs/Lobby-1"), ringSize, new LogPublisher() {
             @Override

@@ -24,11 +24,18 @@ import java.util.regex.Pattern;
  * abgelegt; ANSI-Farbcodes werden entfernt, damit Crash-Berichte und CLI lesbar
  * bleiben. Das Schreiben erfolgt sofort, damit auch ein harter Crash die letzten
  * Zeilen auf der Platte lässt.
+ *
+ * <p>Die Datei wächst nicht unbegrenzt: Ab {@link #DEFAULT_MAX_BYTES} wird sie nach
+ * {@code latest.log.1} weitergedreht (eine ältere Drehung wird ersetzt). Ohne das
+ * füllt ein dauerhaft redender Service die Platte, ohne dass es jemandem auffällt.
  */
 final class ServiceLogs implements AutoCloseable {
 
     /** Default-Größe des Ringpuffers. */
     static final int DEFAULT_RING_SIZE = 200;
+
+    /** Ab dieser Größe wird {@code latest.log} nach {@code latest.log.1} gedreht. */
+    static final long DEFAULT_MAX_BYTES = 10L * 1024 * 1024;
 
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
     private static final Pattern ANSI = Pattern.compile("\\u001B\\[[0-9;?]*[ -/]*[@-~]|\\u001B\\][^\\u0007]*\\u0007");
@@ -36,10 +43,12 @@ final class ServiceLogs implements AutoCloseable {
     private final String serviceName;
     private final Path file;
     private final int ringSize;
+    private final long maxBytes;
     private final LogPublisher publisher;
     private final Deque<String> ring = new ArrayDeque<>();
-    private final BufferedWriter writer;
     private final Object lock = new Object();
+    private BufferedWriter writer;
+    private long written;
     private boolean closed;
 
     /**
@@ -50,11 +59,18 @@ final class ServiceLogs implements AutoCloseable {
      * @throws IOException wenn die Logdatei nicht geöffnet werden kann
      */
     ServiceLogs(String serviceName, Path logDirectory, int ringSize, LogPublisher publisher) throws IOException {
+        this(serviceName, logDirectory, ringSize, publisher, DEFAULT_MAX_BYTES);
+    }
+
+    ServiceLogs(String serviceName, Path logDirectory, int ringSize, LogPublisher publisher,
+                long maxBytes) throws IOException {
         this.serviceName = Objects.requireNonNull(serviceName, "serviceName");
         this.ringSize = ringSize;
+        this.maxBytes = maxBytes;
         this.publisher = Objects.requireNonNull(publisher, "publisher");
         Files.createDirectories(logDirectory);
         this.file = logDirectory.resolve("latest.log");
+        this.written = Files.exists(file) ? Files.size(file) : 0;
         this.writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
     }
@@ -92,6 +108,10 @@ final class ServiceLogs implements AutoCloseable {
                 ring.removeFirst();
             }
             try {
+                written += stamped.length() + 1L;
+                if (written > maxBytes) {
+                    rotate();
+                }
                 writer.write(stamped);
                 writer.newLine();
                 writer.flush();
@@ -113,6 +133,20 @@ final class ServiceLogs implements AutoCloseable {
         synchronized (lock) {
             return List.copyOf(ring);
         }
+    }
+
+    /**
+     * Dreht {@code latest.log} nach {@code latest.log.1} und legt die Datei neu an.
+     */
+    private void rotate() throws IOException {
+        writer.flush();
+        writer.close();
+        Files.move(file, file.resolveSibling("latest.log.1"),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE);
+        written = 0;
     }
 
     /**
