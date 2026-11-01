@@ -44,6 +44,41 @@ class FallbackSelectorTest {
     }
 
     @Test
+    void initialServerPrefersTheFallbackTarget() {
+        ServiceInfo fallback = server("Lobby-1", 1).toBuilder().setOnlinePlayers(20).build();
+        ServiceInfo busyEventServer = server("Event-1", 1).toBuilder()
+                .setFallback(false)
+                .setOnlinePlayers(0)
+                .build();
+
+        assertEquals("Lobby-1", FallbackSelector.selectInitial(List.of(busyEventServer, fallback))
+                .orElseThrow().getName());
+    }
+
+    @Test
+    void initialServerFallsBackToALeastLoadedServerWithoutFallbackFlag() {
+        ServiceInfo full = server("Lobby-1", 1).toBuilder()
+                .setFallback(false).setOnlinePlayers(30).build();
+        ServiceInfo empty = server("Lobby-2", 1).toBuilder()
+                .setFallback(false).setOnlinePlayers(2).build();
+
+        assertEquals("Lobby-2", FallbackSelector.selectInitial(List.of(full, empty))
+                .orElseThrow().getName());
+    }
+
+    @Test
+    void initialServerIgnoresProxiesOfflineServersAndUnboundPorts() {
+        ServiceInfo proxy = server("Proxy-1", 1).toBuilder()
+                .setFallback(false).setType(ServiceType.PROXY).build();
+        ServiceInfo offline = server("Lobby-2", 1).toBuilder()
+                .setFallback(false).setState(ServiceState.STARTING).build();
+        ServiceInfo unbound = server("Lobby-3", 1).toBuilder()
+                .setFallback(false).setPort(0).build();
+
+        assertTrue(FallbackSelector.selectInitial(List.of(proxy, offline, unbound)).isEmpty());
+    }
+
+    @Test
     void exclusionSkipsTheKickedServer() {
         ServiceInfo kicked = server("Lobby-1", 1);
         ServiceInfo next = server("Lobby-2", 2);

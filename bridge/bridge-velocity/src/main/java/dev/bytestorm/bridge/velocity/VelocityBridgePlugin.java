@@ -205,8 +205,9 @@ public final class VelocityBridgePlugin implements BridgePlatform {
      *
      * <p>Velocity füllt die Auswahl aus {@code try} bzw. den Forced Hosts. Nur wenn
      * dort nichts steht oder der Platzhalter der Cloud übrig ist, übernimmt der
-     * bevorzugte Fallback-Service. Eine bewusst konfigurierte Auswahl des
-     * Betreibers bleibt damit bestehen.
+     * bevorzugte Startserver. Eine bewusst konfigurierte Auswahl des Betreibers
+     * bleibt damit bestehen; ohne markiertes Fallback-Ziel kommt jeder erreichbare
+     * Server in Frage, sonst könnte niemand beitreten.
      *
      * @param event Auswahl des initialen Servers
      */
@@ -219,9 +220,10 @@ public final class VelocityBridgePlugin implements BridgePlatform {
         if (!placeholder) {
             return;
         }
-        FallbackSelector.select(onlineServices.values())
+        FallbackSelector.selectInitial(onlineServices.values())
                 .flatMap(service -> server.getServer(service.getName()))
-                .ifPresent(event::setInitialServer);
+                .ifPresentOrElse(event::setInitialServer, () -> logger.warn(
+                        "Kein Startserver verfügbar — kein Server ist ONLINE"));
     }
 
     /**
