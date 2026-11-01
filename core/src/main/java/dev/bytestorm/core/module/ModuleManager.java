@@ -2,6 +2,7 @@ package dev.bytestorm.core.module;
 
 import dev.bytestorm.api.ByteStormApi;
 import dev.bytestorm.api.CloudModule;
+import dev.bytestorm.api.module.AccessGrant;
 import dev.bytestorm.api.module.ModuleContext;
 import dev.bytestorm.api.module.Modules;
 import dev.bytestorm.core.mongo.model.ModuleConfig;
@@ -169,6 +170,21 @@ public final class ModuleManager implements Modules, AutoCloseable {
     public Map<String, String> settings(String name) {
         String module = requireName(name);
         return store.find(module).map(ModuleConfig::settings).orElseGet(Map::of);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Die Rechte berechnet das Modul aus seinen Einstellungen: Es kennt seine
+     * Schlüsselnamen und weiß, was eine fehlende Angabe bedeutet. Liegt das Modul
+     * nicht in {@code lib/}, bleibt die Antwort leer — aus der Konfiguration allein
+     * lässt sich nicht ableiten, was ein fremdes Modul daraus liest.
+     */
+    @Override
+    public Collection<AccessGrant> access(String name) {
+        String module = requireName(name);
+        Holder holder = holders.get(module);
+        return holder == null ? List.of() : holder.module.access(settings(module));
     }
 
     /**

@@ -40,6 +40,13 @@ class ModuleManagerTest {
     }
 
     @Test
+    void accessIsDelegatedToTheModule() {
+        assertTrue(manager.access("rest").isEmpty(), "das Testmodul kennt keine Rechte");
+        assertTrue(manager.access("fehlt").isEmpty(), "ein unbekanntes Modul liefert nichts");
+        assertThrows(IllegalArgumentException.class, () -> manager.access(" "));
+    }
+
+    @Test
     void discoveredModulesAreListedWithoutBeingEnabled() {
         List<String> names = manager.list().stream().map(ModuleInfo::getName).toList();
 

@@ -4,6 +4,7 @@ import dev.bytestorm.api.ByteStormApi;
 import dev.bytestorm.api.CloudModule;
 import dev.bytestorm.api.group.Groups;
 import dev.bytestorm.api.health.CloudHealth;
+import dev.bytestorm.api.module.AccessGrant;
 import dev.bytestorm.api.module.ModuleContext;
 import dev.bytestorm.api.player.Players;
 import dev.bytestorm.api.service.CrashBudget;
@@ -102,6 +103,155 @@ class RestModuleTest {
         } finally {
             module.onDisable();
         }
+    }
+
+    @Test
+    void aScopedKeyOnlyReachesItsOwnEndpoints() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of(
+                "host", "127.0.0.1",
+                "port", String.valueOf(port),
+                "apiKey", KEY,
+                "apiKey.monitoring", "monitoring-key-1234",
+                "scopes.monitoring", "monitoring.read, services.read"));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            assertEquals(200, get(client, port, "monitoring-key-1234").statusCode(),
+                    "der Monitoring-Key darf lesen");
+            assertEquals(200, get(client, port, "monitoring-key-1234", RestModule.HEALTH_PATH).statusCode(),
+                    "auch den Zustand");
+
+            HttpResponse<String> denied = post(client, port, "monitoring-key-1234", RestModule.STOP_PATH,
+                    "{\"id\":\"" + LOBBY_ID + "\"}");
+            assertEquals(403, denied.statusCode(), denied.body());
+            assertTrue(denied.body().contains("services.write"),
+                    "die Ablehnung nennt den fehlenden Scope: " + denied.body());
+            assertTrue(services.calls.isEmpty(), "ohne Scope kein Stop: " + services.calls);
+
+            assertEquals(200, post(client, port, KEY, RestModule.STOP_PATH,
+                    "{\"id\":\"" + LOBBY_ID + "\"}").statusCode(),
+                    "der Admin-Key darf weiterhin alles");
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void accessDescribesTheConfiguredKeysWithoutSecrets() {
+        RestModule module = new RestModule();
+
+        List<AccessGrant> grants = module.access(Map.of(
+                "apiKey", KEY,
+                "apiKey.monitoring", "monitoring-key-1234",
+                "scopes.monitoring", "monitoring.read, services.read"));
+
+        assertEquals(2, grants.size(), grants.toString());
+        AccessGrant admin = grants.stream().filter(AccessGrant::admin).findFirst().orElseThrow();
+        assertEquals("apiKey", admin.name());
+        assertEquals("*", admin.scopeText());
+
+        AccessGrant reader = grants.stream().filter(grant -> !grant.admin()).findFirst().orElseThrow();
+        assertEquals("monitoring", reader.name());
+        assertEquals(List.of("monitoring.read", "services.read"), reader.scopes());
+
+        List<AccessGrant> defaults = module.access(Map.of("apiKey", KEY,
+                "apiKey.reader", "reader-key-1234"));
+        assertEquals(List.of("groups.read", "monitoring.read", "players.read", "services.read"),
+                defaults.stream().filter(grant -> !grant.admin()).findFirst().orElseThrow().scopes(),
+                "ohne Angabe nur Lesen");
+        assertTrue(module.access(Map.of("apiKey", "kurz")).isEmpty(),
+                "unbrauchbare Einstellungen liefern keine Anzeige");
+    }
+
+    @Test
+    void aKeyWithoutScopesIsReadOnly() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of(
+                "host", "127.0.0.1",
+                "port", String.valueOf(port),
+                "apiKey", KEY,
+                "apiKey.reader", "reader-key-1234"));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            assertEquals(200, get(client, port, "reader-key-1234").statusCode());
+            assertEquals(200, get(client, port, "reader-key-1234", RestModule.PLAYERS_PATH).statusCode());
+            assertEquals(403, post(client, port, "reader-key-1234", RestModule.START_PATH,
+                    "{\"group\":\"Lobby\"}").statusCode(), "ohne Scopes kein Start");
+            assertTrue(services.calls.isEmpty(), "kein Aufruf ohne Recht: " + services.calls);
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void familyWildcardsCoverAllScopesOfAFamily() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of(
+                "host", "127.0.0.1",
+                "port", String.valueOf(port),
+                "apiKey", KEY,
+                "apiKey.deploy", "deploy-key-1234",
+                "scopes.deploy", "services.*"));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            assertEquals(200, get(client, port, "deploy-key-1234").statusCode());
+            assertEquals(200, post(client, port, "deploy-key-1234", RestModule.STOP_PATH,
+                    "{\"id\":\"" + LOBBY_ID + "\"}").statusCode(), "services.* deckt das Schreiben ab");
+            assertEquals(403, get(client, port, "deploy-key-1234", RestModule.PLAYERS_PATH).statusCode(),
+                    "andere Familien bleiben zu");
+            assertEquals(403, post(client, port, "deploy-key-1234", RestModule.SCALE_PATH,
+                    "{\"name\":\"Lobby\",\"target\":2}").statusCode());
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void theRateLimitAnswers429WithRetryAfter() throws Exception {
+        int port = freePort();
+        RestModule module = module(Map.of(
+                "host", "127.0.0.1",
+                "port", String.valueOf(port),
+                "apiKey", KEY,
+                "rateLimit", "2"));
+        module.onEnable();
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            assertEquals(200, get(client, port, KEY).statusCode());
+            assertEquals(200, get(client, port, KEY).statusCode());
+
+            HttpResponse<String> limited = get(client, port, KEY);
+            assertEquals(429, limited.statusCode(), limited.body());
+            assertTrue(limited.headers().firstValue("retry-after").isPresent(),
+                    "ohne Retry-After weiß der Client nicht, wann er es erneut versuchen darf");
+            assertTrue(limited.body().contains("Zu viele Anfragen"), limited.body());
+        } finally {
+            module.onDisable();
+        }
+    }
+
+    @Test
+    void unknownScopesAndRateLimitsAreRejectedWhenLoading() {
+        RestModule module = new RestModule();
+        IllegalArgumentException unknownScope = assertThrows(IllegalArgumentException.class,
+                () -> module.onLoad(context(Map.of("apiKey", KEY,
+                        "apiKey.ci", "ci-key-1234", "scopes.ci", "services.fly"), api())));
+        assertTrue(unknownScope.getMessage().contains("services.fly"), unknownScope.getMessage());
+
+        IllegalArgumentException orphan = assertThrows(IllegalArgumentException.class,
+                () -> module.onLoad(context(Map.of("apiKey", KEY, "scopes.ghost", "services.read"), api())));
+        assertTrue(orphan.getMessage().contains("ghost"), orphan.getMessage());
+
+        IllegalArgumentException duplicate = assertThrows(IllegalArgumentException.class,
+                () -> module.onLoad(context(Map.of("apiKey", KEY, "apiKey.ci", KEY), api())));
+        assertTrue(duplicate.getMessage().contains("apiKey.ci"), duplicate.getMessage());
+
+        IllegalArgumentException shortKey = assertThrows(IllegalArgumentException.class,
+                () -> module.onLoad(context(Map.of("apiKey", KEY, "apiKey.ci", "kurz"), api())));
+        assertTrue(shortKey.getMessage().contains("apiKey.ci"), shortKey.getMessage());
+
+        IllegalArgumentException limit = assertThrows(IllegalArgumentException.class,
+                () -> module.onLoad(context(Map.of("apiKey", KEY, "rateLimit", "-1"), api())));
+        assertTrue(limit.getMessage().contains("rateLimit"), limit.getMessage());
     }
 
     @Test

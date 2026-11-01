@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.bytestorm.api.ByteStormApi;
 import dev.bytestorm.api.CloudModule;
 import dev.bytestorm.api.health.CloudHealth;
+import dev.bytestorm.api.module.AccessGrant;
 import dev.bytestorm.api.module.ModuleContext;
+import dev.bytestorm.api.module.RestScope;
 import dev.bytestorm.api.service.CrashBudget;
 import dev.bytestorm.api.service.ServiceCrash;
 import dev.bytestorm.proto.PlayerInfo;
@@ -16,9 +18,8 @@ import dev.bytestorm.proto.ServiceState;
 import dev.bytestorm.proto.StartServiceResponse;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
+import io.javalin.http.Handler;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -44,6 +45,12 @@ import java.util.concurrent.TimeoutException;
  * {@code onEnable} startet den Server, {@code onDisable} stoppt ihn. Jede Anfrage
  * braucht einen gültigen API-Key; ohne ihn antwortet der Server mit {@code 401}
  * und ohne weitere Verarbeitung (§11).
+ *
+ * <p>Ein Key ist nicht allmächtig: Jeder trägt Scopes ({@link RestScope}), und
+ * jede Route verlangt genau einen davon — ein Monitoring-Key liest den Zustand,
+ * kann aber keinen Service stoppen. Zusätzlich gilt je Key eine Anfragegrenze
+ * ({@link RateLimits}); wer sie überschreitet, bekommt {@code 429} samt
+ * {@code Retry-After} (§11, §20).
  *
  * <p>Fehler verlassen den Server als JSON ({@code {"error": "..."}}) ohne
  * Stacktrace; Details stehen im Modul-Log. Ein falscher Aufruf (fehlendes Feld,
@@ -121,12 +128,16 @@ public final class RestModule implements CloudModule {
     /** Header, den Clients alternativ zum {@code Authorization}-Header nutzen können. */
     public static final String API_KEY_HEADER = "X-API-Key";
 
+    /** Anfrage-Attribut, unter dem der geprüfte Key für die Scope-Prüfung liegt. */
+    public static final String KEY_ATTRIBUTE = "bytestorm.apiKey";
+
     private static final String BEARER = "bearer ";
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private ModuleContext context;
     private RestSettings settings;
+    private RateLimits rateLimits;
     private Javalin server;
 
     @Override
@@ -140,6 +151,23 @@ public final class RestModule implements CloudModule {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>Die Rechte stammen aus derselben Auswertung wie die Prüfung jeder Anfrage
+     * ({@link ApiKeys}): Was hier steht, ist das, was der Key wirklich darf. Sind
+     * die Einstellungen fehlerhaft, bleibt die Liste leer — das Modul startet dann
+     * ohnehin nicht.
+     */
+    @Override
+    public List<AccessGrant> access(Map<String, String> settings) {
+        try {
+            return ApiKeys.from(settings).grants();
+        } catch (IllegalArgumentException e) {
+            return List.of();
+        }
+    }
+
+    /**
      * Prüft die Einstellungen, bevor irgendetwas lauscht: Ohne API-Key bleibt das
      * Modul aus, statt die Cloud ungeschützt anzubieten (§11, §20).
      *
@@ -150,7 +178,11 @@ public final class RestModule implements CloudModule {
     public void onLoad(ModuleContext context) {
         this.context = Objects.requireNonNull(context, "context");
         this.settings = RestSettings.from(context.settings());
-        context.logger().info("REST-Modul vorbereitet, hört auf {} (API-Key gesetzt)", settings);
+        context.logger().info("REST-Modul vorbereitet, hört auf {} — Keys: {}{}", settings,
+                settings.keys().describe(),
+                settings.requestsPerMinute() > 0
+                        ? ", " + settings.requestsPerMinute() + " Anfragen/Minute je Key"
+                        : ", ohne Anfragegrenze");
     }
 
     /**
@@ -164,32 +196,42 @@ public final class RestModule implements CloudModule {
             return;
         }
         ByteStormApi api = context.api();
+        rateLimits = new RateLimits(settings.requestsPerMinute());
         server = Javalin.create(config -> {
             // Die Cloud bringt ihr eigenes Logging mit; das Javalin-Banner stört nur.
             config.startup.showJavalinBanner = false;
             config.jetty.host = settings.host();
             config.jetty.port = settings.port();
-            // Pflicht vor jedem Endpunkt, auch vor späteren (§11).
+            // Pflicht vor jedem Endpunkt, auch vor späteren (§11): Key prüfen und
+            // begrenzen; danach verlangt jede Route ihren Scope.
             config.routes.before(this::authorize);
-            config.routes.get(SERVICES_PATH, ctx -> services(ctx, api));
-            config.routes.post(START_PATH, ctx -> start(ctx, api));
-            config.routes.post(STOP_PATH, ctx -> stop(ctx, api));
-            config.routes.post(COMMAND_PATH, ctx -> command(ctx, api));
-            config.routes.post(RESTART_PATH, ctx -> restart(ctx, api));
-            config.routes.get(LOGS_PATH, ctx -> logs(ctx, api));
-            config.routes.post(REAPPLY_PATH, ctx -> reapply(ctx, api));
-            config.routes.post(ONLINE_PATH, ctx -> online(ctx, api));
-            config.routes.get(GROUPS_PATH, ctx -> groups(ctx, api));
-            config.routes.post(MAINTENANCE_PATH, ctx -> maintenance(ctx, api));
-            config.routes.post(SCALE_PATH, ctx -> scale(ctx, api));
-            config.routes.get(PLAYERS_PATH, ctx -> players(ctx, api));
-            config.routes.post(CONNECT_PATH, ctx -> connect(ctx, api));
-            config.routes.post(KICK_PATH, ctx -> kick(ctx, api));
-            config.routes.get(HEALTH_PATH, ctx -> health(ctx, api));
-            config.routes.get(NODES_STATUS_PATH, ctx -> nodeStatus(ctx, api));
-            config.routes.get(METRICS_PATH, ctx -> metrics(ctx, api));
-            config.routes.exception(ApiException.class,
-                    (error, ctx) -> error(ctx, error.status(), error.getMessage()));
+            config.routes.get(SERVICES_PATH, guarded(RestScope.SERVICES_READ, ctx -> services(ctx, api)));
+            config.routes.post(START_PATH, guarded(RestScope.SERVICES_WRITE, ctx -> start(ctx, api)));
+            config.routes.post(STOP_PATH, guarded(RestScope.SERVICES_WRITE, ctx -> stop(ctx, api)));
+            config.routes.post(COMMAND_PATH, guarded(RestScope.SERVICES_WRITE, ctx -> command(ctx, api)));
+            config.routes.post(RESTART_PATH, guarded(RestScope.SERVICES_WRITE, ctx -> restart(ctx, api)));
+            config.routes.get(LOGS_PATH, guarded(RestScope.SERVICES_READ, ctx -> logs(ctx, api)));
+            config.routes.post(REAPPLY_PATH, guarded(RestScope.SERVICES_WRITE, ctx -> reapply(ctx, api)));
+            config.routes.post(ONLINE_PATH, guarded(RestScope.SERVICES_WRITE, ctx -> online(ctx, api)));
+            config.routes.get(GROUPS_PATH, guarded(RestScope.GROUPS_READ, ctx -> groups(ctx, api)));
+            config.routes.post(MAINTENANCE_PATH, guarded(RestScope.GROUPS_WRITE, ctx -> maintenance(ctx, api)));
+            config.routes.post(SCALE_PATH, guarded(RestScope.GROUPS_WRITE, ctx -> scale(ctx, api)));
+            config.routes.get(PLAYERS_PATH, guarded(RestScope.PLAYERS_READ, ctx -> players(ctx, api)));
+            config.routes.post(CONNECT_PATH, guarded(RestScope.PLAYERS_WRITE, ctx -> connect(ctx, api)));
+            config.routes.post(KICK_PATH, guarded(RestScope.PLAYERS_WRITE, ctx -> kick(ctx, api)));
+            config.routes.get(HEALTH_PATH, guarded(RestScope.MONITORING_READ, ctx -> health(ctx, api)));
+            config.routes.get(NODES_STATUS_PATH, guarded(RestScope.MONITORING_READ, ctx -> nodeStatus(ctx, api)));
+            config.routes.get(METRICS_PATH, guarded(RestScope.MONITORING_READ, ctx -> metrics(ctx, api)));
+            config.routes.exception(ApiException.class, (error, ctx) -> {
+                if (error.status() == 401) {
+                    // Eine Ablehnung nennt das erwartete Verfahren (RFC 7235).
+                    ctx.header("WWW-Authenticate", "Bearer realm=\"bytestorm\"");
+                }
+                if (error instanceof TooManyRequestsException limited) {
+                    ctx.header("Retry-After", String.valueOf(limited.retryAfterSeconds()));
+                }
+                error(ctx, error.status(), error.getMessage());
+            });
             config.routes.exception(Exception.class, (error, ctx) -> {
                 context.logger().error("REST-Anfrage {} {} fehlgeschlagen",
                         ctx.method(), ctx.path(), error);
@@ -220,16 +262,38 @@ public final class RestModule implements CloudModule {
     }
 
     /**
-     * Prüft den Key aus {@code Authorization: Bearer …} oder {@code X-API-Key}.
+     * Prüft den Key aus {@code Authorization: Bearer …} oder {@code X-API-Key},
+     * begrenzt die Anfragen je Key und merkt sich den Key für die Scope-Prüfung.
      *
      * @param ctx Anfrage
-     * @throws UnauthorizedException wenn kein gültiger Key mitkam
+     * @throws UnauthorizedException    wenn kein gültiger Key mitkam
+     * @throws TooManyRequestsException wenn der Key sein Kontingent verbraucht hat
      */
     private void authorize(Context ctx) {
-        String presented = presentedKey(ctx);
-        if (!matches(settings.apiKey(), presented)) {
-            throw new UnauthorizedException();
+        ApiKey key = settings.keys().resolve(presentedKey(ctx))
+                .orElseThrow(UnauthorizedException::new);
+        long retryAfter = rateLimits.retryAfter(key.name());
+        if (retryAfter > 0) {
+            throw new TooManyRequestsException(retryAfter);
         }
+        ctx.attribute(KEY_ATTRIBUTE, key);
+    }
+
+    /**
+     * Verlangt den Scope, bevor ein Handler läuft.
+     *
+     * @param scope   erforderliche Berechtigung
+     * @param handler eigentliche Aktion
+     * @return der geprüfte Handler
+     */
+    private static Handler guarded(RestScope scope, Handler handler) {
+        return ctx -> {
+            Object current = ctx.attribute(KEY_ATTRIBUTE);
+            if (!(current instanceof ApiKey key) || !key.allows(scope)) {
+                throw new ForbiddenException(scope);
+            }
+            handler.handle(ctx);
+        };
     }
 
     private static String presentedKey(Context ctx) {
@@ -240,19 +304,6 @@ public final class RestModule implements CloudModule {
         }
         String direct = ctx.header(API_KEY_HEADER);
         return direct == null ? "" : direct.trim();
-    }
-
-    /**
-     * Vergleicht Keys in konstanter Zeit, damit die Antwortzeit nicht verrät, wie
-     * viele Zeichen richtig waren.
-     *
-     * @param expected  konfigurierter Key
-     * @param presented Key aus der Anfrage
-     * @return {@code true}, wenn beide übereinstimmen
-     */
-    private static boolean matches(String expected, String presented) {
-        return MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8),
-                presented.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -976,6 +1027,40 @@ public final class RestModule implements CloudModule {
 
         UnauthorizedException() {
             super(401, "Ungültiger oder fehlender API-Key");
+        }
+    }
+
+    /**
+     * Lehnt eine Anfrage ab, deren Key den Scope nicht trägt. Die Antwort nennt
+     * den fehlenden Scope — Namen sind keine Geheimnisse, Keys schon.
+     */
+    static final class ForbiddenException extends ApiException {
+
+        private static final long serialVersionUID = 1L;
+
+        ForbiddenException(RestScope scope) {
+            super(403, "Dem API-Key fehlt der Scope '" + scope.id() + "'");
+        }
+    }
+
+    /**
+     * Meldet eine überschrittene Anfragegrenze samt Wartezeit, damit ein Client
+     * von selbst langsamer wird statt weiterzulaufen.
+     */
+    static final class TooManyRequestsException extends ApiException {
+
+        private static final long serialVersionUID = 1L;
+
+        private final long retryAfterSeconds;
+
+        TooManyRequestsException(long retryAfterSeconds) {
+            super(429, "Zu viele Anfragen — bitte in " + retryAfterSeconds
+                    + " Sekunden erneut versuchen");
+            this.retryAfterSeconds = retryAfterSeconds;
+        }
+
+        long retryAfterSeconds() {
+            return retryAfterSeconds;
         }
     }
 }

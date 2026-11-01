@@ -1,5 +1,6 @@
 package dev.bytestorm.cli;
 
+import dev.bytestorm.api.module.AccessGrant;
 import dev.bytestorm.api.module.Modules;
 import dev.bytestorm.proto.ModuleInfo;
 import dev.bytestorm.proto.ModuleState;
@@ -28,6 +29,7 @@ class ModuleCommandLineTest {
 
     private final List<String> calls = new java.util.ArrayList<>();
     private final Map<String, Map<String, String>> settings = new LinkedHashMap<>();
+    private final Map<String, List<AccessGrant>> grants = new LinkedHashMap<>();
 
     private Map<String, ModuleInfo> modules;
     private ModuleCommandLine commandLine;
@@ -45,7 +47,7 @@ class ModuleCommandLineTest {
         String output = commandLine.execute(new String[]{"module", "list"});
 
         String text = plain(output);
-        assertTrue(text.startsWith("Name Aktiviert Zustand Version"), text);
+        assertTrue(text.startsWith("Name Aktiviert Zustand Version Zugriff"), text);
         assertTrue(text.contains("discord nein DISABLED 1.0"), text);
         assertTrue(text.contains("rest ja ENABLED 1.0"), text);
         // Alphabetisch, nicht in Einfügereihenfolge.
@@ -70,6 +72,92 @@ class ModuleCommandLineTest {
         assertTrue(output.contains("Status: ENABLED"), output);
         assertTrue(output.contains("Aktiviert: ja"), output);
         assertTrue(output.contains("Version: 1.0"), output);
+    }
+
+    @Test
+    void accessIsSummarizedInTheListAndDetailedInInfo() {
+        grants.put("rest", List.of(
+                new AccessGrant("apiKey", true, List.of("*")),
+                new AccessGrant("monitoring", false, List.of("monitoring.read", "services.read"))));
+
+        String list = plain(commandLine.execute(new String[]{"module", "list"}));
+        assertTrue(list.contains("rest ja ENABLED 1.0 2 Keys, 1× voll"), list);
+        assertTrue(list.contains("discord nein DISABLED 1.0 —"),
+                "ohne Rechte bleibt die Spalte leer: " + list);
+
+        String info = commandLine.execute(new String[]{"module", "info", "rest"});
+        assertTrue(info.contains("Zugriff: apiKey"), info);
+        assertTrue(info.contains("[*]"), "der volle Zugriff zeigt seine Wildcard: " + info);
+        assertTrue(info.contains("Zugriff: monitoring"), info);
+        assertTrue(info.contains("monitoring.read, services.read"), info);
+        assertFalse(info.contains("geheim"), "kein Geheimnis in der Anzeige: " + info);
+    }
+
+    @Test
+    void moduleInfoNamesTheEndpointsBehindEveryScope() {
+        grants.put("rest", List.of(
+                new AccessGrant("apiKey", true, List.of("*")),
+                new AccessGrant("monitoring", false, List.of("monitoring.read"))));
+
+        String output = plain(commandLine.execute(new String[]{"module", "info", "rest"}));
+
+        assertTrue(output.contains("je Scope die freigegebenen Endpunkte"), output);
+        assertTrue(output.contains("monitoring.read GET /health, GET /nodes/status, GET /metrics"),
+                output);
+        assertTrue(output.contains("services.write POST /services/start, POST /services/stop"),
+                output);
+        assertTrue(output.contains("players.write POST /players/connect, POST /players/kick"),
+                output);
+    }
+
+    @Test
+    void moduleInfoWithoutRightsShowsNoScopeMenu() {
+        grants.put("discord", List.of());
+
+        String output = plain(commandLine.execute(new String[]{"module", "info", "discord"}));
+
+        assertFalse(output.contains("GET /services"), output);
+        assertFalse(output.contains("je Scope"), output);
+    }
+
+    @Test
+    void accessPrintsAMatrixOfEveryKeyAndItsScopes() {
+        grants.put("rest", List.of(
+                new AccessGrant("apiKey", true, List.of("*")),
+                new AccessGrant("monitoring", false, List.of("monitoring.read", "services.read"))));
+        grants.put("discord", List.of(new AccessGrant("bot", false, List.of("players.read"))));
+
+        String output = plain(commandLine.execute(new String[]{"module", "access"}));
+
+        assertTrue(output.startsWith("Modul Zugang Scopes"), output);
+        assertTrue(output.contains("discord bot players.read"), output);
+        assertTrue(output.contains("rest apiKey *"), output);
+        assertTrue(output.contains("rest monitoring monitoring.read, services.read"), output);
+        assertTrue(output.indexOf("discord") < output.indexOf("rest"),
+                "Module stehen alphabetisch: " + output);
+    }
+
+    @Test
+    void accessCanBeNarrowedToOneModule() {
+        grants.put("rest", List.of(new AccessGrant("apiKey", true, List.of("*"))));
+        grants.put("discord", List.of(new AccessGrant("bot", false, List.of("players.read"))));
+
+        String output = plain(commandLine.execute(new String[]{"module", "access", "rest"}));
+
+        assertTrue(output.contains("rest apiKey *"), output);
+        assertFalse(output.contains("discord"), output);
+    }
+
+    @Test
+    void accessWithoutEntriesOrWithAnUnknownModuleSaysSo() {
+        String empty = commandLine.execute(new String[]{"module", "access"});
+        assertTrue(empty.contains("Keine Zugänge hinterlegt"), empty);
+
+        String none = commandLine.execute(new String[]{"module", "access", "discord"});
+        assertTrue(none.contains("hat keine Zugänge hinterlegt"), none);
+
+        String unknown = commandLine.execute(new String[]{"module", "access", "fehlt"});
+        assertTrue(unknown.contains("Unbekanntes Modul"), unknown);
     }
 
     @Test
@@ -132,6 +220,7 @@ class ModuleCommandLineTest {
         assertTrue(commandLine.execute(new String[]{"module", "quark"}).contains("Unbekanntes Modul-Kommando"));
         assertTrue(commandLine.execute(new String[]{"module", "help"}).contains("module disable"));
         assertTrue(commandLine.execute(new String[]{"module", "help"}).contains("module set"));
+        assertTrue(commandLine.execute(new String[]{"module", "help"}).contains("module access"));
     }
 
     private static ModuleInfo info(String name, String version, boolean enabled, ModuleState state) {
@@ -163,6 +252,11 @@ class ModuleCommandLineTest {
         @Override
         public Map<String, String> settings(String name) {
             return Map.copyOf(settings.getOrDefault(name, Map.of()));
+        }
+
+        @Override
+        public Collection<AccessGrant> access(String name) {
+            return List.copyOf(grants.getOrDefault(name, List.of()));
         }
 
         @Override

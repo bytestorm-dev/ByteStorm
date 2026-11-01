@@ -1,6 +1,8 @@
 package dev.bytestorm.cli;
 
+import dev.bytestorm.api.module.AccessGrant;
 import dev.bytestorm.api.module.Modules;
+import dev.bytestorm.api.module.RestScope;
 import dev.bytestorm.proto.ModuleInfo;
 
 import java.util.ArrayList;
@@ -29,6 +31,11 @@ import java.util.concurrent.TimeoutException;
  * REST-Moduls in die Modul-Konfiguration, damit niemand die Collection von Hand
  * bearbeitet. Geheimnisartige Werte zeigt {@code module settings} nur redigiert
  * (§20).
+ *
+ * <p>{@code module list} und {@code module info} zeigen zusätzlich die Zugänge,
+ * die ein Modul aus seinen Einstellungen ableitet — beim REST-Modul also die
+ * API-Keys mit ihren Scopes. Die Rechte kommen vom Modul selbst; die CLI kennt
+ * die Regeln nicht und kann sie deshalb auch nicht anders auslegen (§11, §20).
  */
 public final class ModuleCommandLine {
 
@@ -37,6 +44,7 @@ public final class ModuleCommandLine {
             module list               alle bekannten Module mit Zustand
             module info <name>        Details eines Moduls
             module settings <name>    Einstellungen eines Moduls (Geheimnisse redigiert)
+            module access [name]      Modul, Zugang und Scopes als Übersicht (Audit)
             module set <name> <key> <wert>  Einstellung setzen, z. B. apiKey des REST-Moduls
             module enable <name>      Modul zur Laufzeit aktivieren
             module disable <name>     Modul stoppen
@@ -74,6 +82,8 @@ public final class ModuleCommandLine {
             case "help", "-h", "--help" -> Theme.help(USAGE.stripTrailing());
             case "info" -> info(name);
             case "settings", "config" -> settings(name);
+            case "access", "audit" -> accessMatrix(
+                    tokens.length > 2 && !tokens[2].isBlank() ? tokens[2] : null);
             case "set" -> set(tokens);
             case "enable", "start" -> switch (name) {
                 case null -> Theme.warn("Modulname fehlt (module enable <name>)");
@@ -98,11 +108,12 @@ public final class ModuleCommandLine {
             return Theme.dim("Keine Module gefunden — Implementierungen liegen als Jar in lib/.");
         }
         infos.sort(Comparator.comparing(ModuleInfo::getName));
-        Table table = Table.of("Name", "Aktiviert", "Zustand", "Version");
+        Table table = Table.of("Name", "Aktiviert", "Zustand", "Version", "Zugriff");
         for (ModuleInfo info : infos) {
             table.row(info.getName(), Theme.yesNo(info.getEnabled()),
                     Theme.moduleState(info.getState()),
-                    info.getVersion().isBlank() ? Theme.dim("—") : info.getVersion());
+                    info.getVersion().isBlank() ? Theme.dim("—") : info.getVersion(),
+                    accessSummary(info.getName()));
         }
         return table.render();
     }
@@ -121,12 +132,125 @@ public final class ModuleCommandLine {
             return Theme.warn("Unbekanntes Modul: " + name);
         }
         ModuleInfo module = info.get();
-        return String.join(System.lineSeparator(),
+        List<String> lines = new ArrayList<>(List.of(
                 Theme.field("Name", Theme.bold(module.getName())),
                 Theme.field("Status", Theme.moduleState(module.getState())),
                 Theme.field("Aktiviert", Theme.yesNo(module.getEnabled())),
                 Theme.field("Version", module.getVersion().isBlank()
-                        ? "unbekannt" : module.getVersion()));
+                        ? "unbekannt" : module.getVersion())));
+        List<AccessGrant> grants = access(module.getName());
+        if (grants.isEmpty()) {
+            lines.add(Theme.field("Zugriff", Theme.dim("—")));
+        } else {
+            for (AccessGrant grant : grants) {
+                lines.add(Theme.field("Zugriff", grant.name()
+                        + " " + Theme.dim("[" + grant.scopeText() + "]")));
+            }
+            scopeEndpoints(lines, grants);
+        }
+        return String.join(System.lineSeparator(), lines);
+    }
+
+    /**
+     * Hängt die Endpunkte an, die jeder Scope freigibt — die Liste, aus der ein
+     * Betreiber den passenden Scope wählt (§11, §20).
+     *
+     * <p>Gezeigt wird das ganze MENÜ, nicht nur die schon vergebenen Scopes: Wer
+     * einem Key weniger Rechte geben will, muss sehen, was die Alternativen
+     * erlauben. Module ohne REST-Scopes (etwa Discord) bekommen keinen Block.
+     *
+     * @param lines  Ausgabezeilen, werden ergänzt
+     * @param grants Zugänge des Moduls
+     */
+    private static void scopeEndpoints(List<String> lines, List<AccessGrant> grants) {
+        boolean rest = grants.stream().anyMatch(grant -> grant.admin()
+                || grant.scopes().stream().anyMatch(ModuleCommandLine::isRestScope));
+        if (!rest) {
+            return;
+        }
+        lines.add(Theme.field("Scopes", Theme.dim("je Scope die freigegebenen Endpunkte")));
+        for (RestScope scope : RestScope.values()) {
+            lines.add("  " + Theme.bold(scope.id()) + "  " + Theme.dim(scope.endpointText()));
+        }
+    }
+
+    /**
+     * @param scope Name aus einem Zugang, z. B. {@code services.read} oder {@code services.*}
+     * @return {@code true}, wenn der Name zur REST-Rechte-Vergabe gehört
+     */
+    private static boolean isRestScope(String scope) {
+        return scope.equals(RestScope.ALL) || scope.endsWith(".*")
+                || RestScope.of(scope).isPresent();
+    }
+
+    /**
+     * @param name Modulname
+     * @return z. B. {@code 2 Keys, 1× voll}, oder {@code —}
+     */
+    private String accessSummary(String name) {
+        List<AccessGrant> grants = access(name);
+        if (grants.isEmpty()) {
+            return Theme.dim("—");
+        }
+        long admin = grants.stream().filter(AccessGrant::admin).count();
+        return grants.size() + (grants.size() == 1 ? " Key" : " Keys")
+                + (admin > 0 ? ", " + admin + "× voll" : "");
+    }
+
+    /**
+     * Holt die Zugänge vom Modul; ein Modul ohne Rechte oder mit unbrauchbaren
+     * Einstellungen liefert nichts, statt die Anzeige zu kippen.
+     *
+     * @param name Modulname
+     * @return die Zugänge, nie {@code null}
+     */
+    private List<AccessGrant> access(String name) {
+        try {
+            return List.copyOf(modules.access(name));
+        } catch (RuntimeException e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * {@code module access [name]}: eine Zeile je Zugang, alle Module
+     * untereinander — die Übersicht für einen Audit (§11, §20).
+     *
+     * <p>Anders als {@code module list} lässt sie Module ohne Rechte weg und
+     * zeigt dafür jeden Key einzeln mit seinen Scopes. Die Werte der Keys stehen
+     * auch hier nicht.
+     *
+     * @param only Modulname zum Eingrenzen, {@code null} für alle
+     * @return Tabelle oder ein Hinweis, wenn es nichts zu zeigen gibt
+     */
+    private String accessMatrix(String only) {
+        List<ModuleInfo> infos;
+        try {
+            infos = new ArrayList<>(modules.list());
+        } catch (RuntimeException e) {
+            return Theme.fail("Fehler: " + messageOf(e));
+        }
+        infos.sort(Comparator.comparing(ModuleInfo::getName));
+        if (only != null && infos.stream().noneMatch(info -> info.getName().equalsIgnoreCase(only))) {
+            return Theme.warn("Unbekanntes Modul: " + only);
+        }
+        Table table = Table.of("Modul", "Zugang", "Scopes");
+        int rows = 0;
+        for (ModuleInfo info : infos) {
+            if (only != null && !info.getName().equalsIgnoreCase(only)) {
+                continue;
+            }
+            for (AccessGrant grant : access(info.getName())) {
+                table.row(info.getName(), grant.name(), grant.scopeText());
+                rows++;
+            }
+        }
+        if (rows == 0) {
+            return only == null
+                    ? Theme.dim("Keine Zugänge hinterlegt — Module ohne Rechte liefern keine Einträge.")
+                    : Theme.dim("Modul '" + only + "' hat keine Zugänge hinterlegt.");
+        }
+        return table.render();
     }
 
     /**

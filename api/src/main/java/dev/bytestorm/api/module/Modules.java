@@ -3,6 +3,7 @@ package dev.bytestorm.api.module;
 import dev.bytestorm.proto.ModuleInfo;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -36,6 +37,20 @@ public interface Modules {
      * @return die Einstellungen, leer wenn keine gesetzt sind
      */
     Map<String, String> settings(String name);
+
+    /**
+     * Liest die Zugänge eines Moduls, also wer darin was darf (§11, §20).
+     *
+     * <p>Die Antwort kommt vom Modul selbst und enthält keine Geheimnisse — nur
+     * Namen und Rechte. Ist das Modul nicht geladen oder kennt es keine Rechte,
+     * bleibt die Liste leer.
+     *
+     * @param name Modulname
+     * @return je Zugang ein Eintrag, leer wenn keiner bekannt ist
+     */
+    default Collection<AccessGrant> access(String name) {
+        return List.of();
+    }
 
     /**
      * Setzt eine einzelne Einstellung und speichert sie. Sie gilt ab dem
