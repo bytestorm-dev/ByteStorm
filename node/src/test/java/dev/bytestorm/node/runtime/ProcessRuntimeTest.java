@@ -71,8 +71,9 @@ class ProcessRuntimeTest {
 
         assertTrue(handle.isAlive());
         assertTrue(Long.parseLong(handle.nativeId()) > 0);
-        await(() -> logsContain(handle, "started name=Lobby-1 password=true args=nogui"),
-                "Kindprozess hat sich nicht mit den Bridge-Variablen gemeldet");
+        await(() -> logsContain(handle,
+                        "started file=" + BridgeEnvironment.FILE_NAME + " passwordEnv=false args=nogui"),
+                "Kindprozess hat den Dateinamen, aber kein Passwort in der Umgebung bekommen");
         assertTrue(Files.isRegularFile(work.resolve("service/plugins/ByteStormBridge.jar")));
         await(() -> logsContain(handle, "[ERR] stderr-marker"), "stderr wurde nicht gelesen");
 
@@ -197,8 +198,8 @@ class ProcessRuntimeTest {
 
                 public final class TestServer {
                     public static void main(String[] args) throws Exception {
-                        System.out.println("started name=" + System.getenv("BYTESTORM_SERVICE_NAME")
-                                + " password=" + (System.getenv("BYTESTORM_REDIS_PASSWORD") != null)
+                        System.out.println("started file=" + System.getenv("BYTESTORM_BRIDGE_FILE")
+                                + " passwordEnv=" + (System.getenv("BYTESTORM_REDIS_PASSWORD") != null)
                                 + " args=" + String.join(",", args));
                         System.err.println("stderr-marker");
                         System.out.flush();

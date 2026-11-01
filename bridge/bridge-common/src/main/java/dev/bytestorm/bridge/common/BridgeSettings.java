@@ -1,5 +1,10 @@
 package dev.bytestorm.bridge.common;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
@@ -9,10 +14,15 @@ import java.util.UUID;
 /**
  * Zugangsdaten und Zeitfenster einer Bridge (§15, §20).
  *
- * <p>Die Werte kommen aus der Umgebung des Service-Prozesses, die der Node beim
- * Start setzt ({@code BYTESTORM_*}); für Tests und manuelle Starts haben
- * Systemproperties Vorrang. Das Passwort wird nie in {@link #toString()}
- * ausgegeben.
+ * <p>Die Werte kommen in dieser Reihenfolge: Systemproperties (für Tests und
+ * manuelle Starts), dann die Zugangsdatei aus {@code BYTESTORM_BRIDGE_FILE}, die
+ * der Node beim Start in den Service-Ordner schreibt, zuletzt die alten
+ * {@code BYTESTORM_*}-Variablen für manuell gestartete Server. Das Passwort wird
+ * nie in {@link #toString()} ausgegeben.
+ *
+ * <p>Die Datei ist der bevorzugte Weg, weil Umgebungsvariablen in
+ * {@code /proc/<pid>/environ} und {@code docker inspect} lesbar sind und an
+ * Kindprozesse vererbt werden (§20).
  *
  * @param serviceId        Service-UUID
  * @param serviceName      Service-Name, z. B. {@code Lobby-1}
@@ -59,6 +69,24 @@ public record BridgeSettings(
     /** Umgebungsvariable für das Redis-Passwort. */
     public static final String ENV_REDIS_PASSWORD = "BYTESTORM_REDIS_PASSWORD";
 
+    /** Umgebungsvariable mit dem Dateinamen der Zugangsdatei (§20). */
+    public static final String ENV_BRIDGE_FILE = "BYTESTORM_BRIDGE_FILE";
+
+    /** Dateiname, den der Node in den Service-Ordner schreibt. */
+    public static final String FILE_NAME = ".bytestorm-bridge.properties";
+
+    /** Schlüssel in der Zugangsdatei. */
+    public static final String KEY_SERVICE_ID = "service.id";
+
+    /** Schlüssel in der Zugangsdatei. */
+    public static final String KEY_SERVICE_NAME = "service.name";
+
+    /** Schlüssel in der Zugangsdatei. */
+    public static final String KEY_REDIS_ADDRESS = "redis.address";
+
+    /** Schlüssel in der Zugangsdatei. */
+    public static final String KEY_REDIS_PASSWORD = "redis.password";
+
     /**
      * @param serviceId         Service-UUID
      * @param serviceName       Service-Name
@@ -85,7 +113,7 @@ public record BridgeSettings(
      * @throws BridgeConfigurationException wenn Pflichtwerte fehlen oder ungültig sind
      */
     public static BridgeSettings fromEnvironment() {
-        return fromEnvironment(System.getProperties(), System.getenv());
+        return fromEnvironment(System.getProperties(), System.getenv(), Path.of(""));
     }
 
     /**
@@ -95,13 +123,31 @@ public record BridgeSettings(
      * @throws BridgeConfigurationException wenn Pflichtwerte fehlen oder ungültig sind
      */
     public static BridgeSettings fromEnvironment(Properties properties, Map<String, String> environment) {
+        return fromEnvironment(properties, environment, Path.of(""));
+    }
+
+    /**
+     * @param properties       Systemproperties
+     * @param environment      Umgebungsvariablen
+     * @param workingDirectory Ordner, gegen den ein relativer Dateiname aufgelöst wird
+     * @return Einstellungen mit Standard-Zeitfenstern
+     * @throws BridgeConfigurationException wenn Pflichtwerte fehlen oder die Datei nicht lesbar ist
+     */
+    static BridgeSettings fromEnvironment(Properties properties, Map<String, String> environment,
+                                          Path workingDirectory) {
         Objects.requireNonNull(properties, "properties");
         Objects.requireNonNull(environment, "environment");
+        Objects.requireNonNull(workingDirectory, "workingDirectory");
 
-        String id = value(properties, environment, PROPERTY_SERVICE_ID, ENV_SERVICE_ID);
-        String name = value(properties, environment, PROPERTY_SERVICE_NAME, ENV_SERVICE_NAME);
-        String address = value(properties, environment, PROPERTY_REDIS_ADDRESS, ENV_REDIS_ADDRESS);
-        String password = value(properties, environment, PROPERTY_REDIS_PASSWORD, ENV_REDIS_PASSWORD);
+        Properties file = file(environment, workingDirectory);
+        String id = value(properties, environment, file,
+                PROPERTY_SERVICE_ID, ENV_SERVICE_ID, KEY_SERVICE_ID);
+        String name = value(properties, environment, file,
+                PROPERTY_SERVICE_NAME, ENV_SERVICE_NAME, KEY_SERVICE_NAME);
+        String address = value(properties, environment, file,
+                PROPERTY_REDIS_ADDRESS, ENV_REDIS_ADDRESS, KEY_REDIS_ADDRESS);
+        String password = value(properties, environment, file,
+                PROPERTY_REDIS_PASSWORD, ENV_REDIS_PASSWORD, KEY_REDIS_PASSWORD);
 
         UUID serviceId;
         try {
@@ -119,13 +165,41 @@ public record BridgeSettings(
     }
 
     private static String value(Properties properties, Map<String, String> environment,
-                                String property, String env) {
+                                Properties file, String property, String env, String key) {
         String fromProperty = properties.getProperty(property);
         if (fromProperty != null && !fromProperty.isBlank()) {
             return fromProperty.trim();
         }
         String fromEnvironment = environment.get(env);
-        return fromEnvironment == null || fromEnvironment.isBlank() ? null : fromEnvironment.trim();
+        if (fromEnvironment != null && !fromEnvironment.isBlank()) {
+            return fromEnvironment.trim();
+        }
+        String fromFile = file.getProperty(key);
+        return fromFile == null || fromFile.isBlank() ? null : fromFile.trim();
+    }
+
+    /**
+     * Liest die Zugangsdatei, sofern der Node ihren Namen mitgegeben hat.
+     *
+     * @return die Werte aus der Datei, leer wenn keine angegeben ist
+     */
+    private static Properties file(Map<String, String> environment, Path workingDirectory) {
+        String configured = environment.get(ENV_BRIDGE_FILE);
+        if (configured == null || configured.isBlank()) {
+            return new Properties();
+        }
+        Path path = Path.of(configured.trim());
+        if (!path.isAbsolute()) {
+            path = workingDirectory.toAbsolutePath().resolve(path);
+        }
+        Properties file = new Properties();
+        try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            file.load(reader);
+        } catch (IOException e) {
+            throw new BridgeConfigurationException("Bridge-Datei nicht lesbar: " + path
+                    + " (" + e.getMessage() + ")");
+        }
+        return file;
     }
 
     private static String requireSimpleName(String name) {

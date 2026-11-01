@@ -50,9 +50,13 @@ class DockerRuntimeTest {
         assertEquals(30001, request.port());
         assertEquals(List.of("java", "-Xms1024M", "-Xmx1024M", "-XX:+UseG1GC",
                 "-jar", "/data/server.jar", "nogui"), request.command());
-        assertEquals("Lobby-1", request.environment().get(BridgeEnvironment.SERVICE_NAME));
-        assertEquals("secret", request.environment().get(BridgeEnvironment.REDIS_PASSWORD));
+        assertEquals(BridgeEnvironment.FILE_NAME, request.environment().get(BridgeEnvironment.BRIDGE_FILE));
+        assertFalse(request.environment().containsValue("secret"),
+                "das Redis-Passwort steht nicht in der Umgebung des Containers");
         assertEquals("custom", request.environment().get("EXTRA"));
+        Path bridgeFile = work.resolve("service").resolve(BridgeEnvironment.FILE_NAME);
+        assertTrue(Files.isRegularFile(bridgeFile), "die Zugangsdatei liegt im eingebundenen Service-Ordner");
+        assertTrue(Files.readString(bridgeFile).contains("redis.password=secret"));
 
         assertTrue(Files.isRegularFile(work.resolve("service/plugins/ByteStormBridge.jar")));
         assertEquals("container-1", handle.nativeId());

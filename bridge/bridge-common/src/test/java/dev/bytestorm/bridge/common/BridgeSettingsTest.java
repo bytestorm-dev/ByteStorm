@@ -1,7 +1,10 @@
 package dev.bytestorm.bridge.common;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Properties;
@@ -56,6 +59,45 @@ class BridgeSettingsTest {
                         BridgeSettings.ENV_REDIS_ADDRESS, "redis://localhost:6379")));
 
         assertTrue(error.getMessage().contains("Service-ID"), error.getMessage());
+    }
+
+    @Test
+    void readsTheCredentialsFromTheBridgeFile(@TempDir Path temp) throws Exception {
+        Path file = temp.resolve(BridgeSettings.FILE_NAME);
+        Files.writeString(file, "service.id=" + ID + "\nservice.name=Lobby-1\n"
+                + "redis.address=redis://localhost:6379\nredis.password=geheim\n");
+
+        BridgeSettings settings = BridgeSettings.fromEnvironment(new Properties(),
+                Map.of(BridgeSettings.ENV_BRIDGE_FILE, file.toString()), temp);
+
+        assertEquals(ID, settings.serviceId().toString());
+        assertEquals("Lobby-1", settings.serviceName());
+        assertEquals("geheim", settings.redisPassword());
+
+        BridgeSettings relative = BridgeSettings.fromEnvironment(new Properties(),
+                Map.of(BridgeSettings.ENV_BRIDGE_FILE, BridgeSettings.FILE_NAME), temp);
+        assertEquals("Lobby-1", relative.serviceName(),
+                "ein relativer Name wird gegen das Arbeitsverzeichnis des Servers aufgelöst");
+    }
+
+    @Test
+    void anUnreadableBridgeFileIsReported(@TempDir Path temp) {
+        BridgeConfigurationException error = assertThrows(BridgeConfigurationException.class,
+                () -> BridgeSettings.fromEnvironment(new Properties(),
+                        Map.of(BridgeSettings.ENV_BRIDGE_FILE, "fehlt.properties"), temp));
+
+        assertTrue(error.getMessage().contains("Bridge-Datei"), error.getMessage());
+    }
+
+    @Test
+    void theLegacyEnvironmentStillWorks() {
+        BridgeSettings settings = BridgeSettings.fromEnvironment(new Properties(), Map.of(
+                BridgeSettings.ENV_SERVICE_ID, ID,
+                BridgeSettings.ENV_SERVICE_NAME, "Lobby-1",
+                BridgeSettings.ENV_REDIS_ADDRESS, "redis://localhost:6379"));
+
+        assertEquals("Lobby-1", settings.serviceName(),
+                "ein manuell gestarteter Server ohne Zugangsdatei bleibt startfähig");
     }
 
     @Test
