@@ -5,12 +5,13 @@ import java.util.List;
 /**
  * Auto-Restart-Verhalten nach einem Crash (§12.5, §21).
  *
- * @param maxRestarts     maximale Versuche, danach gilt die Gruppe als {@code DEGRADED}
+ * @param maxRestarts     Abstürze in Folge, nach denen nicht mehr automatisch
+ *                        gestartet wird; die Gruppe gilt dann als {@code DEGRADED}
  * @param backoffSeconds  Wartezeit je Versuch in Sekunden
  */
 public record CrashSettings(int maxRestarts, List<Integer> backoffSeconds) {
 
-    /** Default-Anzahl Versuche. */
+    /** Default: nach drei Abstürzen in Folge startet der Service nicht mehr von selbst. */
     public static final int DEFAULT_MAX_RESTARTS = 3;
 
     /** Default-Backoff, passend zu den Versuchen. */

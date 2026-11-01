@@ -1,9 +1,14 @@
 package dev.bytestorm.node.lifecycle;
 
 import dev.bytestorm.api.service.ServiceId;
+import dev.bytestorm.node.crash.CrashBudget;
+import dev.bytestorm.node.crash.CrashInfo;
 import dev.bytestorm.node.crash.CrashSupport;
 import dev.bytestorm.node.crash.ServiceCrashSupervisor;
 import dev.bytestorm.node.runtime.ServiceRuntime;
+import dev.bytestorm.proto.GroupHealthChanged;
+import dev.bytestorm.proto.GroupState;
+import dev.bytestorm.proto.ServiceCrashed;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceState;
 import dev.bytestorm.proto.ServiceStateChanged;
@@ -14,6 +19,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,6 +51,7 @@ public final class ServiceManager implements AutoCloseable {
     private final ServicePortProvider ports;
     private final ServicePreparer preparer;
     private final Consumer<ServiceStateChanged> stateEvents;
+    private final Consumer<GroupHealthChanged> groupEvents;
     private final CrashSupport crashes;
     private final Duration heartbeatTimeout;
     private final Clock clock;
@@ -52,6 +59,7 @@ public final class ServiceManager implements AutoCloseable {
     private final Map<ServiceId, ServiceCrashSupervisor> services = new LinkedHashMap<>();
     private final Map<String, ServiceId> names = new LinkedHashMap<>();
     private final Map<ServiceId, Instant> heartbeats = new HashMap<>();
+    private final Map<ServiceId, CrashInfo> lastCrashes = new LinkedHashMap<>();
     private final Set<String> degradedGroups = ConcurrentHashMap.newKeySet();
 
     /**
@@ -66,7 +74,27 @@ public final class ServiceManager implements AutoCloseable {
                           ServicePreparer preparer,
                           Consumer<ServiceStateChanged> stateEvents,
                           CrashSupport crashes) {
-        this(runtimes, ports, preparer, stateEvents, crashes, DEFAULT_HEARTBEAT_TIMEOUT, Clock.systemUTC());
+        this(runtimes, ports, preparer, stateEvents, crashes, DEFAULT_HEARTBEAT_TIMEOUT,
+                Clock.systemUTC(), health -> {
+                });
+    }
+
+    /**
+     * @param runtimes    Runtime je Gruppe
+     * @param ports       Port-Pool je Gruppe
+     * @param preparer    Ordner-/Template-Vorbereitung
+     * @param stateEvents Publisher für Zustandswechsel
+     * @param crashes     gemeinsame Crash-Konfiguration
+     * @param groupEvents Publisher für Gesundheitswechsel der Gruppen, z. B. {@code DEGRADED}
+     */
+    public ServiceManager(ServiceRuntimeProvider runtimes,
+                          ServicePortProvider ports,
+                          ServicePreparer preparer,
+                          Consumer<ServiceStateChanged> stateEvents,
+                          CrashSupport crashes,
+                          Consumer<GroupHealthChanged> groupEvents) {
+        this(runtimes, ports, preparer, stateEvents, crashes, DEFAULT_HEARTBEAT_TIMEOUT,
+                Clock.systemUTC(), groupEvents);
     }
 
     /**
@@ -83,7 +111,9 @@ public final class ServiceManager implements AutoCloseable {
                           Consumer<ServiceStateChanged> stateEvents,
                           CrashSupport crashes,
                           Duration heartbeatTimeout) {
-        this(runtimes, ports, preparer, stateEvents, crashes, heartbeatTimeout, Clock.systemUTC());
+        this(runtimes, ports, preparer, stateEvents, crashes, heartbeatTimeout, Clock.systemUTC(),
+                health -> {
+                });
     }
 
     ServiceManager(ServiceRuntimeProvider runtimes,
@@ -92,11 +122,13 @@ public final class ServiceManager implements AutoCloseable {
                    Consumer<ServiceStateChanged> stateEvents,
                    CrashSupport crashes,
                    Duration heartbeatTimeout,
-                   Clock clock) {
+                   Clock clock,
+                   Consumer<GroupHealthChanged> groupEvents) {
         this.runtimes = Objects.requireNonNull(runtimes, "runtimes");
         this.ports = Objects.requireNonNull(ports, "ports");
         this.preparer = Objects.requireNonNull(preparer, "preparer");
         this.stateEvents = Objects.requireNonNull(stateEvents, "stateEvents");
+        this.groupEvents = Objects.requireNonNull(groupEvents, "groupEvents");
         this.crashes = Objects.requireNonNull(crashes, "crashes");
         this.heartbeatTimeout = Objects.requireNonNull(heartbeatTimeout, "heartbeatTimeout");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -125,15 +157,20 @@ public final class ServiceManager implements AutoCloseable {
                 () -> ports.acquire(definition.group(), definition.name()),
                 preparer, stateEvents);
         ServiceCrashSupervisor supervisor = new ServiceCrashSupervisor(instance,
-                crashes.settings(), crashes.reports(), crashes.events(), crashes.scheduler(), group -> {
+                crashes.settings(), crashes.reports(),
+                event -> recordCrash(definition.id(), event),
+                crashes.scheduler(), group -> {
             degradedGroups.add(group);
+            publishGroupHealth(group, GroupState.DEGRADED, definition.name(), reasonOf(definition.id()));
             crashes.degraded().accept(group);
         });
 
         services.put(definition.id(), supervisor);
         names.put(definition.name(), definition.id());
         try {
-            return supervisor.start();
+            ServiceInfo info = supervisor.start();
+            clearDegraded(definition.group().getName());
+            return info;
         } catch (ServiceLifecycleException | RuntimeException e) {
             services.remove(definition.id());
             names.remove(definition.name());
@@ -142,12 +179,17 @@ public final class ServiceManager implements AutoCloseable {
     }
 
     /**
+     * Startet einen Service von Hand. Das hebt eine {@code DEGRADED}-Sperre der
+     * Gruppe auf und gibt dem Service sein Absturz-Budget zurück (§12.5).
+     *
      * @param id Service-ID
      * @return der Service im Zustand {@code STARTING}
      * @throws ServiceLifecycleException wenn der Start fehlschlägt
      */
     public ServiceInfo start(ServiceId id) throws ServiceLifecycleException {
-        return require(id).start();
+        ServiceInfo info = require(id).start();
+        clearDegraded(info.getGroup());
+        return info;
     }
 
     /**
@@ -360,6 +402,7 @@ public final class ServiceManager implements AutoCloseable {
         services.remove(id);
         names.remove(supervisor.instance().definition().name());
         heartbeats.remove(id);
+        lastCrashes.remove(id);
         return true;
     }
 
@@ -368,6 +411,47 @@ public final class ServiceManager implements AutoCloseable {
      */
     public Set<String> degradedGroups() {
         return Set.copyOf(degradedGroups);
+    }
+
+    /**
+     * Wie viele Abstürze ein Service noch verkraftet, bevor er nicht mehr von
+     * selbst startet (§12.5). Ohne diesen Wert sieht man einem {@code ONLINE}-
+     * Service nicht an, dass er kurz vor der {@code DEGRADED}-Sperre steht.
+     *
+     * @return verbleibendes Budget je Service-Name
+     */
+    public synchronized Map<String, CrashBudget> crashBudgets() {
+        Map<String, CrashBudget> budgets = new LinkedHashMap<>();
+        for (ServiceCrashSupervisor supervisor : services.values()) {
+            budgets.put(supervisor.instance().definition().name(),
+                    CrashBudget.of(supervisor.crashHandler().policy()));
+        }
+        return Map.copyOf(budgets);
+    }
+
+    /**
+     * Eine degradierte Gruppe hat ihre Neustarts aufgebraucht. Die Skalierung
+     * darf sie deshalb nicht selbst wieder hochziehen — sonst startet sie der
+     * Cloud bei jedem Lauf einen neuen Service, und der stirbt genauso.
+     *
+     * @param group Gruppenname
+     * @return {@code true}, wenn nur ein manueller Start die Gruppe wieder startet
+     */
+    public boolean isDegraded(String group) {
+        return degradedGroups.contains(group);
+    }
+
+    /**
+     * Der Zustand {@code CRASHED} allein sagt nicht, warum ein Service gestorben
+     * ist. Diese Liste hält je Service die letzte gemeldete Ursache samt
+     * Berichtsordner fest, bis der Service entfernt wird.
+     *
+     * @return der letzte Absturz je Service, neueste zuerst
+     */
+    public synchronized List<CrashInfo> lastCrashes() {
+        return lastCrashes.values().stream()
+                .sorted(Comparator.comparing(CrashInfo::time).reversed())
+                .toList();
     }
 
     /**
@@ -402,7 +486,53 @@ public final class ServiceManager implements AutoCloseable {
             services.clear();
             names.clear();
             heartbeats.clear();
+            lastCrashes.clear();
         }
+    }
+
+    private void clearDegraded(String group) {
+        if (degradedGroups.remove(group)) {
+            log.info("Gruppe '{}' ist nach einem manuellen Start wieder freigegeben", group);
+            publishGroupHealth(group, GroupState.HEALTHY, "", "manueller Start");
+        }
+    }
+
+    /**
+     * Meldet eine Gruppe als {@code DEGRADED} bzw. wieder {@code HEALTHY} (§12.5).
+     * Module (Discord, Monitoring) abonnieren {@link GroupHealthChanged} und
+     * benachrichtigen daraus; ein ausgefallener Publisher darf den Crash-Pfad
+     * nicht stören.
+     *
+     * @param group   Gruppenname
+     * @param state   neuer Zustand
+     * @param service betroffener Service, leer beim Freigeben
+     * @param reason  Ursache, z. B. {@code Start-Timeout}
+     */
+    private void publishGroupHealth(String group, GroupState state, String service, String reason) {
+        try {
+            groupEvents.accept(GroupHealthChanged.newBuilder()
+                    .setGroup(group)
+                    .setState(state)
+                    .setService(service == null ? "" : service)
+                    .setReason(reason == null ? "" : reason)
+                    .setTime(clock.millis())
+                    .build());
+        } catch (RuntimeException e) {
+            log.warn("Gesundheitswechsel von '{}' nach {} nicht veröffentlicht: {}",
+                    group, state, e.toString());
+        }
+    }
+
+    private synchronized String reasonOf(ServiceId id) {
+        CrashInfo crash = lastCrashes.get(id);
+        return crash == null ? "" : crash.reason();
+    }
+
+    private void recordCrash(ServiceId id, ServiceCrashed event) {
+        synchronized (this) {
+            lastCrashes.put(id, CrashInfo.of(event));
+        }
+        crashes.events().accept(event);
     }
 
     private record Timeout(ServiceId id, ServiceCrashSupervisor supervisor, ServiceExit exit) {

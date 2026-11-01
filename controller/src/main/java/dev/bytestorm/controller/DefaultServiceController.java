@@ -2,6 +2,8 @@ package dev.bytestorm.controller;
 
 import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.controller.registry.ServiceRegistry;
+import dev.bytestorm.node.crash.CrashBudget;
+import dev.bytestorm.node.crash.CrashInfo;
 import dev.bytestorm.node.lifecycle.ServiceDefinition;
 import dev.bytestorm.node.lifecycle.ServiceLifecycleException;
 import dev.bytestorm.node.lifecycle.ServiceManager;
@@ -9,6 +11,7 @@ import dev.bytestorm.proto.ServiceInfo;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -78,6 +81,16 @@ public final class DefaultServiceController implements ServiceController {
     @Override
     public List<ServiceId> checkHeartbeats() {
         return manager.checkHeartbeats();
+    }
+
+    @Override
+    public List<CrashInfo> lastCrashes() {
+        return manager.lastCrashes();
+    }
+
+    @Override
+    public Map<String, CrashBudget> crashBudgets() {
+        return manager.crashBudgets();
     }
 
     @Override

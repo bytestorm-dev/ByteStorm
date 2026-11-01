@@ -2,6 +2,8 @@ package dev.bytestorm.cli;
 
 import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.controller.ServiceController;
+import dev.bytestorm.node.crash.CrashBudget;
+import dev.bytestorm.node.crash.CrashInfo;
 import dev.bytestorm.node.lifecycle.ServiceDefinition;
 import dev.bytestorm.node.lifecycle.ServiceLifecycleException;
 import dev.bytestorm.proto.RuntimeType;
@@ -15,6 +17,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -166,7 +169,7 @@ class ServiceCommandLineTest {
 
     static final class FakeController implements ServiceController {
 
-        final ServiceInfo info = ServiceInfo.newBuilder()
+        ServiceInfo info = ServiceInfo.newBuilder()
                 .setId(ServiceId.random().toString())
                 .setName("Lobby-1")
                 .setGroup("Lobby")
@@ -176,6 +179,8 @@ class ServiceCommandLineTest {
                 .build();
         final List<String> calls = new ArrayList<>();
         List<String> logs = List.of();
+        List<CrashInfo> crashes = List.of();
+        Map<String, CrashBudget> budgets = Map.of();
         private List<ServiceId> timeouts = List.of();
         private Duration stopTimeout;
 
@@ -256,6 +261,16 @@ class ServiceCommandLineTest {
         @Override
         public List<String> logs(ServiceId id) {
             return logs;
+        }
+
+        @Override
+        public List<CrashInfo> lastCrashes() {
+            return crashes;
+        }
+
+        @Override
+        public Map<String, CrashBudget> crashBudgets() {
+            return budgets;
         }
 
         @Override

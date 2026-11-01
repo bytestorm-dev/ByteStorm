@@ -1,12 +1,15 @@
 package dev.bytestorm.controller;
 
 import dev.bytestorm.api.service.ServiceId;
+import dev.bytestorm.node.crash.CrashBudget;
+import dev.bytestorm.node.crash.CrashInfo;
 import dev.bytestorm.node.lifecycle.ServiceDefinition;
 import dev.bytestorm.node.lifecycle.ServiceLifecycleException;
 import dev.bytestorm.proto.ServiceInfo;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -108,6 +111,16 @@ public interface ServiceController {
      * @return letzte Logzeilen
      */
     List<String> logs(ServiceId id);
+
+    /**
+     * @return der letzte Absturz je Service samt Ursache, neueste zuerst
+     */
+    List<CrashInfo> lastCrashes();
+
+    /**
+     * @return verbleibendes Absturz-Budget je Service-Name
+     */
+    Map<String, CrashBudget> crashBudgets();
 
     /**
      * @return degradierte Gruppen

@@ -28,8 +28,15 @@ public final class ServiceCrashSupervisor {
 
     private static final Logger log = LoggerFactory.getLogger(ServiceCrashSupervisor.class);
 
-    /** Default-Frist für den Übergang nach {@code ONLINE}. */
-    public static final Duration DEFAULT_START_TIMEOUT = Duration.ofSeconds(60);
+    /**
+     * Default-Frist für den Übergang nach {@code ONLINE}.
+     *
+     * <p>Paper braucht beim ersten Start mit Weltgenerierung und Plugin-Laden
+     * deutlich länger als eine Minute. Mit 60 s wurde ein laufender Server als
+     * „Start-Timeout“ gekillt, im Backoff neu gestartet und die Versuche waren
+     * aufgebraucht, bevor er je {@code ONLINE} melden konnte.
+     */
+    public static final Duration DEFAULT_START_TIMEOUT = Duration.ofMinutes(3);
 
     private final ServiceInstance instance;
     private final CrashHandler crashes;
@@ -90,12 +97,15 @@ public final class ServiceCrashSupervisor {
     }
 
     /**
-     * Startet den Service.
+     * Startet den Service von Hand und gibt ihm sein volles Absturz-Budget
+     * zurück. Automatische Neustarts laufen über {@code startInstance} und
+     * zählen weiter, bis die Versuche erschöpft sind.
      *
      * @return der Service im Zustand {@code STARTING}
      * @throws ServiceLifecycleException wenn der Start fehlschlägt
      */
     public ServiceInfo start() throws ServiceLifecycleException {
+        crashes.policy().reset();
         return startInstance();
     }
 

@@ -1,8 +1,10 @@
 package dev.bytestorm.cli;
 
+import dev.bytestorm.proto.ServiceState;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -57,6 +59,28 @@ class ServiceScreenTest {
         assertTrue(text.contains("ready"), text);
         assertTrue(text.contains("Screen Lobby-1 beendet"), text);
         assertEquals(List.of("exec:" + controller.info.getId() + ":say hi"), controller.calls);
+    }
+
+    @Test
+    @Timeout(10)
+    void endsWhenTheServiceStops() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        PipedInputStream input = new PipedInputStream();
+        // Die Pipe bleibt offen: Der Screen muss ohne Eingabe und ohne Strg+] enden.
+        PipedOutputStream commands = new PipedOutputStream(input);
+        Terminal terminal = terminal(input, output);
+        String text;
+        try {
+            controller.info = controller.info.toBuilder().setState(ServiceState.STOPPED).build();
+            new ServiceScreen(controller, terminal).run("Lobby-1");
+            text = output.toString(StandardCharsets.UTF_8);
+        } finally {
+            terminal.close();
+            commands.close();
+        }
+
+        assertTrue(text.contains("Service Lobby-1 ist STOPPED"), text);
+        assertTrue(text.contains("Screen Lobby-1 beendet"), text);
     }
 
     @Test

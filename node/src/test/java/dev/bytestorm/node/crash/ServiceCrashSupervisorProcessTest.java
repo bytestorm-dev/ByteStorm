@@ -67,7 +67,8 @@ class ServiceCrashSupervisorProcessTest {
                 () -> PortLease.fixed(30001), new DirectoryPreparer(), event -> {
         });
         ServiceCrashSupervisor supervisor = new ServiceCrashSupervisor(instance,
-                new CrashSettings(1, List.of(0)),
+                // Zwei Abstürze: der erste startet neu, der zweite beendet die Neustarts.
+                new CrashSettings(2, List.of(0)),
                 new CrashReportWriter(temp.resolve("crash-reports")),
                 events::add, CrashHandler.virtualThreads(), degraded::add);
 

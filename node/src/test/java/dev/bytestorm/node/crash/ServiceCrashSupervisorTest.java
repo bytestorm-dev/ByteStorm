@@ -67,24 +67,43 @@ class ServiceCrashSupervisorTest {
     }
 
     @Test
-    void afterThreeRestartsTheGroupIsDegraded() throws Exception {
+    void afterThreeCrashesTheGroupIsDegraded() throws Exception {
         ServiceCrashSupervisor supervisor = supervisor(new CrashSettings(3, List.of(5, 15, 60)));
         supervisor.start();
 
-        long[] backoffs = {5, 15, 60};
-        for (int attempt = 1; attempt <= 3; attempt++) {
+        long[] backoffs = {5, 15};
+        for (int attempt = 1; attempt <= 2; attempt++) {
             runtime.completeExit(attempt);
             assertEquals(ServiceState.CRASHED, supervisor.instance().info().getState());
             scheduler.runWithDelay(Duration.ofSeconds(backoffs[attempt - 1]));
         }
-        runtime.completeExit(4);
+        runtime.completeExit(3);
 
-        assertEquals(List.of(Duration.ofSeconds(5), Duration.ofSeconds(15), Duration.ofSeconds(60)),
-                scheduler.backoffs());
-        assertEquals(4, crashedEvents.size());
+        assertEquals(List.of(Duration.ofSeconds(5), Duration.ofSeconds(15)), scheduler.backoffs());
+        assertEquals(3, crashedEvents.size());
         assertEquals(List.of("Lobby"), degraded);
         assertEquals(ServiceState.CRASHED, supervisor.instance().info().getState());
-        assertEquals(4, runtime.starts, "nach erschöpften Versuchen kein weiterer Start");
+        assertEquals(3, runtime.starts,
+                "nach dem dritten Absturz in Folge startet der Node keinen neuen Service");
+    }
+
+    @Test
+    void aManualStartRestoresTheCrashBudget() throws Exception {
+        ServiceCrashSupervisor supervisor = supervisor(new CrashSettings(2, List.of(5)));
+        supervisor.start();
+
+        runtime.completeExit(1);
+        scheduler.runWithDelay(Duration.ofSeconds(5));
+        runtime.completeExit(2);
+
+        assertEquals(List.of("Lobby"), degraded, "der zweite Absturz in Folge beendet die Neustarts");
+
+        supervisor.start();
+        runtime.completeExit(3);
+
+        assertEquals(List.of(Duration.ofSeconds(5), Duration.ofSeconds(5)), scheduler.backoffs(),
+                "nach dem manuellen Start zählt der Service wieder von vorn");
+        assertEquals(1, degraded.size());
     }
 
     @Test

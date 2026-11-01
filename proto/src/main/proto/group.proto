@@ -39,7 +39,15 @@ message GroupUpdated {
   string group = 1;
 }
 
+// Gesundheitswechsel einer Gruppe (§9, §12.5). Module (Discord, Monitoring)
+// abonnieren die Nachricht, um zu melden, wenn eine Gruppe keine Neustarts mehr
+// bekommt und ein manueller Start nötig ist.
 message GroupHealthChanged {
   string group = 1;
   GroupState state = 2;
+
+  // Additive Felder (§6.1): betroffener Service, Ursache und Zeitpunkt.
+  string service = 3;
+  string reason = 4;
+  int64 time = 5;              // Epochen-Millis
 }

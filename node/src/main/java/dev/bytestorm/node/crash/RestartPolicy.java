@@ -9,10 +9,12 @@ import java.util.Optional;
 /**
  * Entscheidet, ob ein Service nach einem Crash neu gestartet wird (§12.5).
  *
- * <p>Die Versuche und Backoffs kommen aus {@link CrashSettings} (Default 3
- * Versuche, 5/15/60 s). Nach einer definierten Online-Zeit werden die Versuche
- * zurückgesetzt, damit eine Gruppe nicht nach seltenen Einzelcrashs dauerhaft
- * als erschöpft gilt.
+ * <p>Gezählt werden Abstürze in Folge, nicht Neustarts: Sind die Versuche aus
+ * {@link CrashSettings} aufgebraucht (Default drei Abstürze, Backoff 5/15/60 s),
+ * startet der Service nicht mehr von selbst — die Gruppe wird {@code DEGRADED}
+ * und erst ein manueller Start weckt sie wieder. Nach einer definierten
+ * Online-Zeit werden die Versuche zurückgesetzt, damit eine Gruppe nicht nach
+ * seltenen Einzelcrashs dauerhaft als erschöpft gilt.
  */
 public final class RestartPolicy {
 
@@ -45,13 +47,13 @@ public final class RestartPolicy {
     /**
      * Vermerkt einen Crash und liefert die Wartezeit bis zum Neustart.
      *
-     * @return Backoff oder leer, wenn keine Versuche mehr übrig sind
+     * @return Backoff oder leer, wenn dieser Absturz das Budget aufbraucht
      */
     public synchronized Optional<Duration> nextBackoff() {
+        attempts++;
         if (attempts >= settings.maxRestarts()) {
             return Optional.empty();
         }
-        attempts++;
         return Optional.of(Duration.ofSeconds(settings.backoffFor(attempts)));
     }
 
@@ -60,6 +62,13 @@ public final class RestartPolicy {
      */
     public synchronized boolean exhausted() {
         return attempts >= settings.maxRestarts();
+    }
+
+    /**
+     * @return die konfigurierten Versuche und Backoffs
+     */
+    public CrashSettings settings() {
+        return settings;
     }
 
     /**

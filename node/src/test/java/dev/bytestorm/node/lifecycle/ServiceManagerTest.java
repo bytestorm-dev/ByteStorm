@@ -46,6 +46,7 @@ class ServiceManagerTest {
     private final List<PortLease> leases = new ArrayList<>();
     private final List<String> degraded = new ArrayList<>();
     private final List<dev.bytestorm.proto.ServiceCrashed> crashedEvents = new ArrayList<>();
+    private final List<dev.bytestorm.proto.GroupHealthChanged> healthEvents = new ArrayList<>();
 
     @Test
     void startRegistersTheServiceAndStopRemovesIt() throws Exception {
@@ -165,7 +166,7 @@ class ServiceManagerTest {
 
     @Test
     void crashRestartsAndThenMarksTheGroupDegraded() throws Exception {
-        ServiceManager manager = manager(new CrashSettings(1, List.of(0)));
+        ServiceManager manager = manager(new CrashSettings(2, List.of(0)));
         ServiceDefinition definition = definition("Lobby-1");
         manager.start(definition);
 
@@ -180,6 +181,30 @@ class ServiceManagerTest {
         assertEquals(ServiceState.CRASHED, manager.info(definition.id()).orElseThrow().getState());
         assertTrue(manager.degradedGroups().contains("Lobby"));
         assertEquals(List.of("Lobby"), degraded);
+        assertEquals(1, healthEvents.size(), "die Sperre geht als GroupHealthChanged raus");
+        assertEquals(dev.bytestorm.proto.GroupState.DEGRADED, healthEvents.get(0).getState());
+        assertEquals("Lobby", healthEvents.get(0).getGroup());
+        assertEquals("Lobby-1", healthEvents.get(0).getService());
+    }
+
+    @Test
+    void aManualStartReleasesADegradedGroup() throws Exception {
+        ServiceManager manager = manager(new CrashSettings(1, List.of(0)));
+        ServiceDefinition definition = definition("Lobby-1");
+        manager.start(definition);
+
+        runtime.completeExit(1);
+
+        assertTrue(manager.isDegraded("Lobby"), "mit einem Versuch ist der erste Absturz das Budget");
+        assertEquals(1, runtime.starts, "ohne Budget startet der Node nicht von selbst");
+
+        manager.start(definition.id());
+
+        assertTrue(manager.degradedGroups().isEmpty(), "ein manueller Start gibt die Gruppe frei");
+        assertEquals(2, runtime.starts);
+        assertEquals(List.of(dev.bytestorm.proto.GroupState.DEGRADED, dev.bytestorm.proto.GroupState.HEALTHY),
+                healthEvents.stream().map(dev.bytestorm.proto.GroupHealthChanged::getState).toList(),
+                "Freigabe und Sperre werden gemeldet");
     }
 
     @Test
@@ -201,6 +226,13 @@ class ServiceManagerTest {
         assertEquals(1, crashedEvents.size());
         assertEquals("Heartbeat-Timeout", crashedEvents.get(0).getReason());
         assertEquals(1, crashedEvents.get(0).getLogTailCount());
+        // Das Dashboard braucht die Ursache, der Zustand CRASHED nennt sie nicht.
+        assertEquals(List.of("Heartbeat-Timeout"), manager.lastCrashes().stream()
+                .map(dev.bytestorm.node.crash.CrashInfo::reason).toList());
+        assertEquals("Lobby-1", manager.lastCrashes().get(0).service());
+        assertEquals(0, manager.crashBudgets().get("Lobby-1").remaining(),
+                "der eine Versuch ist mit diesem Absturz aufgebraucht");
+        assertEquals(1, manager.crashBudgets().get("Lobby-1").total());
     }
 
     @Test
@@ -277,7 +309,8 @@ class ServiceManagerTest {
                 event -> {
                 },
                 new CrashSupport(settings, new CrashReportWriter(temp.resolve("crash-reports")),
-                        crashedEvents::add, scheduler, degraded::add), heartbeatTimeout, clock);
+                        crashedEvents::add, scheduler, degraded::add), heartbeatTimeout, clock,
+                healthEvents::add);
     }
 
     private ServiceDefinition definition(String name) {

@@ -34,10 +34,13 @@ public final class Dashboard {
      * @param port    Port
      * @param online  Spieler online
      * @param max     maximale Spielerzahl
-     * @param runtime Runtime des Services
+     * @param runtime          Runtime des Services
+     * @param remainingCrashes verbleibende Abstürze vor der {@code DEGRADED}-Sperre
+     * @param crashBudget      Budget eines frisch gestarteten Services, {@code 0} wenn unbekannt
      */
     public record ServiceRow(String name, String group, ServiceState state, int port,
-                             int online, int max, String runtime) {
+                             int online, int max, String runtime,
+                             int remainingCrashes, int crashBudget) {
     }
 
     /**
@@ -55,6 +58,19 @@ public final class Dashboard {
     }
 
     /**
+     * Warum ein Service gestorben ist: der Zustand {@code CRASHED} allein sagt es
+     * nicht, und ohne die Ursache sucht man den Absturz im Log statt im Bericht.
+     *
+     * @param service  Service-Name
+     * @param reason   Ursache des letzten Absturzes
+     * @param exitCode Exit-Code, {@code -1} wenn der Node abgebrochen hat
+     * @param time     Zeitpunkt, bereits formatiert
+     * @param report   Ordnername des Crash-Berichts
+     */
+    public record CrashRow(String service, String reason, int exitCode, String time, String report) {
+    }
+
+    /**
      * @param uptime         Laufzeit der Cloud, lesbar formatiert
      * @param onlineServices Services im Zustand {@code ONLINE}
      * @param totalServices  alle bekannten Services
@@ -66,11 +82,13 @@ public final class Dashboard {
      * @param memoryLoad     Speicherlast des Hosts zwischen 0 und 1, {@code null} wenn unbekannt
      * @param services       Service-Zeilen
      * @param groupRows      Gruppen-Zeilen
+     * @param crashes        letzte Crashs je Service, leer wenn keiner abstürzte
      */
     public record Snapshot(String uptime, int onlineServices, int totalServices, int groups,
                            List<String> degradedGroups, long usedMemoryMb, long maxMemoryMb,
                            Double cpuLoad, Double memoryLoad,
-                           List<ServiceRow> services, List<GroupRow> groupRows) {
+                           List<ServiceRow> services, List<GroupRow> groupRows,
+                           List<CrashRow> crashes) {
     }
 
     private Dashboard() {
@@ -96,10 +114,12 @@ public final class Dashboard {
         if (snapshot.services().isEmpty()) {
             out.append(NL).append(Theme.dim("Keine Services registriert."));
         } else {
-            Table table = Table.of("Name", "Gruppe", "Status", "Port", "Spieler", "Runtime");
+            Table table = Table.of("Name", "Gruppe", "Status", "Port", "Spieler", "Runtime",
+                    "Crash-Budget");
             for (ServiceRow row : snapshot.services()) {
                 table.row(row.name(), row.group(), Theme.serviceState(row.state()),
-                        String.valueOf(row.port()), players(row.online(), row.max()), row.runtime());
+                        String.valueOf(row.port()), players(row.online(), row.max()), row.runtime(),
+                        crashBudget(row.remainingCrashes(), row.crashBudget()));
             }
             out.append(NL).append(table.render());
         }
@@ -114,6 +134,16 @@ public final class Dashboard {
                         Theme.groupState(row.state()), String.valueOf(row.running()),
                         row.min() + "/" + (row.max() == 0 ? "unbegrenzt" : row.max()),
                         row.maintenance() ? Theme.maintenance(true) : Theme.maintenance(false));
+            }
+            out.append(NL).append(table.render());
+        }
+
+        if (!snapshot.crashes().isEmpty()) {
+            out.append(NL).append(NL).append(Theme.section("Letzte Crashs"));
+            Table table = Table.of("Service", "Ursache", "Exit", "Zeit", "Bericht");
+            for (CrashRow row : snapshot.crashes()) {
+                table.row(row.service(), Theme.warn(row.reason()), String.valueOf(row.exitCode()),
+                        row.time(), row.report());
             }
             out.append(NL).append(table.render());
         }
@@ -138,6 +168,19 @@ public final class Dashboard {
 
     private static String percent(double load) {
         return Math.round(load * 100) + " %";
+    }
+
+    /**
+     * Ein Service, der zweimal abgestürzt ist, sieht im Dashboard aus wie ein
+     * frisch gestarteter. Das verbleibende Budget macht den Unterschied sichtbar,
+     * bevor die Gruppe {@code DEGRADED} wird und niemand mehr nachschiebt.
+     *
+     * @param remaining verbleibende Abstürze
+     * @param total     Budget eines frisch gestarteten Services, {@code 0} wenn unbekannt
+     * @return {@code verbleibend/gesamt} oder {@code -} ohne Budgetangabe
+     */
+    private static String crashBudget(int remaining, int total) {
+        return total <= 0 ? "-" : remaining + "/" + total;
     }
 
     /**

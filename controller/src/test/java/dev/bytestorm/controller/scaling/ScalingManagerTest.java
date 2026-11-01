@@ -19,8 +19,10 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -32,6 +34,7 @@ class ScalingManagerTest {
     private final List<ServiceInfo> services = new ArrayList<>();
     private final FakeActions actions = new FakeActions(services);
     private final FakeHostMetrics host = new FakeHostMetrics();
+    private final Set<String> degraded = new HashSet<>();
     private final MutableClock clock = new MutableClock(Instant.parse("2026-10-23T18:30:00Z"));
 
     @Test
@@ -47,6 +50,21 @@ class ScalingManagerTest {
 
         manager.tick();
         assertEquals(2, actions.starts.size());
+    }
+
+    @Test
+    void aDegradedGroupGetsNoNewServices() {
+        groups.add(group("Lobby", 1, 4, ServiceMode.DYNAMIC, null));
+        degraded.add("Lobby");
+        ScalingManager manager = manager();
+
+        List<ScalingDecision> decisions = manager.tick();
+
+        assertTrue(actions.starts.isEmpty(),
+                "eine degradierte Gruppe darf nicht automatisch einen neuen Service bekommen");
+        assertEquals(1, decisions.size());
+        assertEquals(ScalingDecision.Action.NONE, decisions.get(0).action());
+        assertEquals("degraded", decisions.get(0).rule());
     }
 
     @Test
@@ -478,7 +496,7 @@ class ScalingManagerTest {
 
     private ScalingManager manager() {
         return new ScalingManager(() -> groups, () -> services, actions,
-                new ScalingSettings(3), clock, Duration.ofSeconds(30), 1, host);
+                new ScalingSettings(3), clock, Duration.ofSeconds(30), 1, host, degraded::contains);
     }
 
     private static ServiceGroup group(String name, int min, int max, ServiceMode mode, PlayerCountRule rule) {

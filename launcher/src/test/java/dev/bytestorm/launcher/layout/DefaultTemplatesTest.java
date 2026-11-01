@@ -47,6 +47,8 @@ class DefaultTemplatesTest {
         assertTrue(Files.isRegularFile(layout.templates().resolve("PROXY/velocity.toml")));
         assertTrue(Files.isRegularFile(layout.templates().resolve("PROXY/" + DefaultTemplates.SECRET_FILE)));
         assertTrue(Files.isRegularFile(layout.templates().resolve("SERVER/server.properties")));
+        assertTrue(Files.isRegularFile(layout.templates().resolve("SERVER/eula.txt")),
+                "ohne eula.txt beendet sich Paper nach dem Start und der Service crasht endlos");
         assertTrue(Files.isRegularFile(layout.templates().resolve("SERVER/" + DefaultTemplates.PAPER_GLOBAL_CONFIG)));
     }
 

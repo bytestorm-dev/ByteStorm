@@ -78,6 +78,16 @@ public final class DefaultTemplates {
                     online-mode=false
                     server-port=%PORT%
                     """),
+            // Ohne diese Datei schreibt sich Paper beim Start selbst eine eula.txt mit
+            // eula=false und beendet sich sofort ("You need to agree to the EULA"). Der
+            // Node sieht nur einen Exit unmittelbar nach dem Start, startet im Backoff neu
+            // und killt nach dem dritten Versuch die ganze Gruppe als DEGRADED — genau das
+            // Fehlerbild "Server stürzen dauernd ab".
+            new File("SERVER/eula.txt", """
+                    # Von ByteStorm angelegtes Standard-Template.
+                    # eula=true ist die Zustimmung zur Minecraft-EULA (https://aka.ms/MinecraftEULA).
+                    eula=true
+                    """),
             new File("SERVER/" + PAPER_GLOBAL_CONFIG, """
                     # Von ByteStorm angelegtes Standard-Template. Anpassungen bleiben erhalten.
                     # Modern Forwarding (§14): enabled + Secret wie in forwarding.secret des Proxys,

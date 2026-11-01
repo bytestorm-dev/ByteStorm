@@ -102,7 +102,7 @@ val bridgePlatforms = listOf("bungeecord", "paper", "velocity")
 
 // Optionale Module liegen als lib/module-<name>.jar bereit: Dort findet sie der
 // ServiceLoader (§16), und ihr Schaltzustand in MongoDB entscheidet, ob sie laufen.
-val modules = listOf("rest")
+val modules = listOf("discord", "rest")
 
 tasks.register<Zip>("distributionZip") {
     group = "distribution"

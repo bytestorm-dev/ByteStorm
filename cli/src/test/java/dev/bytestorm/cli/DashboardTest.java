@@ -29,12 +29,13 @@ class DashboardTest {
         Dashboard.Snapshot snapshot = new Dashboard.Snapshot("1m 05s", 1, 2, 1, List.of(),
                 128, 512, 0.25, 0.5,
                 List.of(new Dashboard.ServiceRow("Lobby-1", "Lobby", ServiceState.ONLINE,
-                                25565, 3, 10, "PROCESS"),
+                                25565, 3, 10, "PROCESS", 2, 3),
                         // Proxies haben keine Obergrenze: dann steht dort nur die Zahl.
                         new Dashboard.ServiceRow("Proxy-1", "Proxy", ServiceState.ONLINE,
-                                25577, 7, 0, "PROCESS")),
+                                25577, 7, 0, "PROCESS", 3, 3)),
                 List.of(new Dashboard.GroupRow("Lobby", ServiceType.SERVER, ServiceMode.DYNAMIC,
-                        GroupState.HEALTHY, 1, 1, 5, false)));
+                        GroupState.HEALTHY, 1, 1, 5, false)),
+                List.of());
 
         String text = Dashboard.render(snapshot);
 
@@ -49,13 +50,38 @@ class DashboardTest {
         assertFalse(text.contains("7/0"), "unbegrenzte Spielerzahl braucht keinen Nenner: " + text);
         assertTrue(text.contains("HEALTHY"), text);
         assertTrue(text.contains("1/5"), text);
+        assertFalse(text.contains("Letzte Crashs"), "ohne Absturz keine Crash-Sektion: " + text);
+        assertTrue(text.contains("Crash-Budget"), text);
+        assertTrue(text.contains("2/3"), "Lobby-1 hat zwei Abstürze übrig: " + text);
+        assertTrue(text.contains("3/3"), text);
+    }
+
+    @Test
+    void namesTheReasonOfTheLastCrash() {
+        Theme.setEnabled(false);
+        Dashboard.Snapshot snapshot = new Dashboard.Snapshot("5s", 0, 1, 1, List.of("Lobby"),
+                64, 256, null, null,
+                List.of(new Dashboard.ServiceRow("Lobby-1", "Lobby", ServiceState.CRASHED,
+                        30001, 0, 10, "PROCESS", 0, 3)),
+                List.of(new Dashboard.GroupRow("Lobby", ServiceType.SERVER, ServiceMode.DYNAMIC,
+                        GroupState.DEGRADED, 1, 1, 5, false)),
+                List.of(new Dashboard.CrashRow("Lobby-1", "Start-Timeout", -1, "12:00:00",
+                        "Lobby-1-20261101-120000-123")));
+
+        String text = Dashboard.render(snapshot);
+
+        assertTrue(text.contains("Letzte Crashs"), text);
+        assertTrue(text.contains("0/3"), "das Budget ist aufgebraucht: " + text);
+        assertTrue(text.contains("Lobby-1"), text);
+        assertTrue(text.contains("Start-Timeout"), text);
+        assertTrue(text.contains("Lobby-1-20261101-120000-123"), text);
     }
 
     @Test
     void reportsDegradedGroupsAndEmptyClouds() {
         Theme.setEnabled(false);
         Dashboard.Snapshot empty = new Dashboard.Snapshot("5s", 0, 0, 0, List.of("Lobby"),
-                64, 256, null, null, List.of(), List.of());
+                64, 256, null, null, List.of(), List.of(), List.of());
 
         String text = Dashboard.render(empty);
 

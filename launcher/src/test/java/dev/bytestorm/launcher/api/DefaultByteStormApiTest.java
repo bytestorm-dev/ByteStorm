@@ -459,6 +459,16 @@ class DefaultByteStormApiTest {
         }
 
         @Override
+        public List<dev.bytestorm.node.crash.CrashInfo> lastCrashes() {
+            return List.of();
+        }
+
+        @Override
+        public java.util.Map<String, dev.bytestorm.node.crash.CrashBudget> crashBudgets() {
+            return java.util.Map.of();
+        }
+
+        @Override
         public List<ServiceInfo> services() {
             return List.copyOf(services);
         }

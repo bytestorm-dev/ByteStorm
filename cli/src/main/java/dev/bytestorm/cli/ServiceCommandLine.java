@@ -3,6 +3,8 @@ package dev.bytestorm.cli;
 import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.controller.ServiceController;
 import dev.bytestorm.controller.scaling.HostMetrics;
+import dev.bytestorm.node.crash.CrashBudget;
+import dev.bytestorm.node.crash.CrashInfo;
 import dev.bytestorm.node.lifecycle.ServiceLifecycleException;
 import dev.bytestorm.proto.GroupState;
 import dev.bytestorm.proto.ServiceGroup;
@@ -12,6 +14,8 @@ import dev.bytestorm.proto.ServiceState;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -39,6 +43,10 @@ public final class ServiceCommandLine {
 
     /** Timeout für einen graceful Stop. */
     public static final Duration STOP_TIMEOUT = Duration.ofSeconds(10);
+
+    /** Zeitpunkt eines Crashs im Dashboard, in der Ortszeit der Cloud. */
+    private static final DateTimeFormatter CRASH_TIME =
+            DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
     /** Hilfe für alle Kommandos, nach Themen gruppiert. */
     public static final String USAGE = """
@@ -367,11 +375,22 @@ public final class ServiceCommandLine {
         List<ServiceInfo> services = controller.services();
         List<String> degraded = List.copyOf(new TreeSet<>(controller.degradedGroups()));
 
+        Map<String, CrashBudget> budgets;
+        try {
+            budgets = controller.crashBudgets();
+        } catch (RuntimeException e) {
+            // Ohne Budgetangabe bleibt die Spalte leer statt die Übersicht zu kippen.
+            budgets = Map.of();
+        }
+
         List<Dashboard.ServiceRow> rows = new ArrayList<>(services.size());
         for (ServiceInfo info : services) {
+            CrashBudget budget = budgets.get(info.getName());
             rows.add(new Dashboard.ServiceRow(info.getName(), info.getGroup(), info.getState(),
                     info.getPort(), info.getOnlinePlayers(), info.getMaxPlayers(),
-                    info.getRuntime().name()));
+                    info.getRuntime().name(),
+                    budget == null ? 0 : budget.remaining(),
+                    budget == null ? 0 : budget.total()));
         }
         rows.sort(Comparator.comparing(Dashboard.ServiceRow::name, String.CASE_INSENSITIVE_ORDER));
 
@@ -388,6 +407,16 @@ public final class ServiceCommandLine {
         }
         groupRows.sort(Comparator.comparing(Dashboard.GroupRow::name, String.CASE_INSENSITIVE_ORDER));
 
+        List<Dashboard.CrashRow> crashRows = new ArrayList<>();
+        try {
+            for (CrashInfo crash : controller.lastCrashes()) {
+                crashRows.add(new Dashboard.CrashRow(crash.service(), crash.reason(), crash.exitCode(),
+                        CRASH_TIME.format(crash.time()), reportName(crash)));
+            }
+        } catch (RuntimeException e) {
+            // Eine unlesbare Crash-Historie darf die Übersicht nicht verhindern.
+        }
+
         long online = services.stream().filter(info -> info.getState() == ServiceState.ONLINE).count();
         Runtime runtime = Runtime.getRuntime();
         return new Dashboard.Snapshot(
@@ -397,7 +426,17 @@ public final class ServiceCommandLine {
                 runtime.maxMemory() / (1024 * 1024),
                 hostMetrics == null ? null : hostMetrics.cpuLoad(),
                 hostMetrics == null ? null : hostMetrics.memoryLoad(),
-                List.copyOf(rows), List.copyOf(groupRows));
+                List.copyOf(rows), List.copyOf(groupRows), List.copyOf(crashRows));
+    }
+
+    /**
+     * @param crash letzter Absturz eines Services
+     * @return Ordnername des Berichts, {@code -} wenn keiner geschrieben wurde
+     */
+    private static String reportName(CrashInfo crash) {
+        return crash.report().getFileName() == null || crash.report().getFileName().toString().isBlank()
+                ? "-"
+                : crash.report().getFileName().toString();
     }
 
     private String status() {

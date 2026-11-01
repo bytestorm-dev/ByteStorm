@@ -33,6 +33,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -51,6 +52,9 @@ import java.util.stream.Collectors;
  *   <li>Host-Last-Regeln ({@link LoadRule}); bei Überschreitung wird nicht
  *       gestartet, wohl aber überzähliger Service abgebaut,</li>
  *   <li>Wartungsmodus, Start-Limit, Cooldown und Start-Fehler-Backoff,</li>
+ *   <li>keine automatischen Starts für Gruppen, die ihre Neustarts aufgebraucht
+ *       haben ({@code DEGRADED}); solche Gruppen startet nur der Betreiber von
+ *       Hand, damit die Cloud nicht endlos neue Services nachschiebt,</li>
  *   <li>kein automatischer Stop von statischen Services oder Services mit
  *       Spielern.</li>
  * </ul>
@@ -84,6 +88,7 @@ public final class ScalingManager implements AutoCloseable, GroupScaler {
     private final Duration cooldown;
     private final int maxStartsPerCycle;
     private final HostMetrics hostMetrics;
+    private final Predicate<String> degraded;
 
     private final Map<String, Instant> lastAction = new HashMap<>();
     private final Map<String, Instant> lastFailure = new HashMap<>();
@@ -103,9 +108,10 @@ public final class ScalingManager implements AutoCloseable, GroupScaler {
     public ScalingManager(Supplier<List<ServiceGroup>> groups,
                           Supplier<List<ServiceInfo>> services,
                           ScalingActions actions,
-                          ScalingSettings settings) {
+                          ScalingSettings settings,
+                          Predicate<String> degraded) {
         this(groups, services, actions, settings, Clock.systemUTC(),
-                DEFAULT_COOLDOWN, DEFAULT_MAX_STARTS_PER_CYCLE, new SystemHostMetrics());
+                DEFAULT_COOLDOWN, DEFAULT_MAX_STARTS_PER_CYCLE, new SystemHostMetrics(), degraded);
     }
 
     ScalingManager(Supplier<List<ServiceGroup>> groups,
@@ -116,7 +122,7 @@ public final class ScalingManager implements AutoCloseable, GroupScaler {
                    Duration cooldown,
                    int maxStartsPerCycle) {
         this(groups, services, actions, settings, clock, cooldown, maxStartsPerCycle,
-                new SystemHostMetrics());
+                new SystemHostMetrics(), group -> false);
     }
 
     ScalingManager(Supplier<List<ServiceGroup>> groups,
@@ -126,7 +132,8 @@ public final class ScalingManager implements AutoCloseable, GroupScaler {
                    Clock clock,
                    Duration cooldown,
                    int maxStartsPerCycle,
-                   HostMetrics hostMetrics) {
+                   HostMetrics hostMetrics,
+                   Predicate<String> degraded) {
         this.groups = Objects.requireNonNull(groups, "groups");
         this.services = Objects.requireNonNull(services, "services");
         this.actions = Objects.requireNonNull(actions, "actions");
@@ -134,6 +141,7 @@ public final class ScalingManager implements AutoCloseable, GroupScaler {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.cooldown = Objects.requireNonNull(cooldown, "cooldown");
         this.hostMetrics = Objects.requireNonNull(hostMetrics, "hostMetrics");
+        this.degraded = Objects.requireNonNull(degraded, "degraded");
         if (cooldown.isNegative()) {
             throw new IllegalArgumentException("cooldown darf nicht negativ sein: " + cooldown);
         }
@@ -299,6 +307,18 @@ public final class ScalingManager implements AutoCloseable, GroupScaler {
             }
             add(decisions, group, ScalingDecision.Action.NONE, "maintenance",
                     countActive(groupServices), "Wartungsmodus");
+            return;
+        }
+
+        if (degraded.test(name)) {
+            // Neustarts sind aufgebraucht: Ein neuer Service stürbe genauso. Nur der
+            // Betreiber startet die Gruppe wieder (und hebt die Sperre damit auf).
+            if (apply) {
+                idleSince.remove(name);
+            }
+            add(decisions, group, ScalingDecision.Action.NONE, "degraded",
+                    countActive(groupServices),
+                    "Gruppe DEGRADED: automatische Starts gestoppt, manueller Start nötig");
             return;
         }
 

@@ -239,8 +239,10 @@ public final class Bootstrap implements AutoCloseable {
             GroupManager groups = new GroupManager(new GroupRepository(mongo), core.groups(),
                     config.ports(), name -> Files.isDirectory(layout.templates().resolve(name)));
             ServiceProvisioner provisioner = provisioner(groups, services, core, layout, config);
+            // Degradierte Gruppen bekommen keine neuen Services: die Skalierung kann den
+            // Absturzgrund nicht beheben, sie würde nur endlos Nachschub starten.
             ScalingManager scaling = new ScalingManager(groups::all, services::all,
-                    provisioner, config.scaling());
+                    provisioner, config.scaling(), services::isDegraded);
             shutdown.registerCloseable("scaling", scaling);
             scaling.start();
             // Templates liegen als Ordner unter templates/; der Rück-Sync findet den
@@ -489,7 +491,11 @@ public final class Bootstrap implements AutoCloseable {
                 core.events()::publish,
                 new CrashSupport(config.crash(), new CrashReportWriter(layout.crashReports()),
                         core.events()::publish, CrashHandler.virtualThreads(),
-                        group -> log.warn("Gruppe {} ist DEGRADED", group)));
+                        group -> log.warn("Gruppe '{}' ist DEGRADED — automatische Neustarts "
+                                + "gestoppt, manueller Start nötig", group)),
+                // Dieselbe Meldung geht als GroupHealthChanged an den Event-Bus: Module
+                // (Discord, Monitoring) benachrichtigen daraus (§12.5, §16).
+                core.events()::publish);
     }
 
     private static ScheduledExecutorService startHeartbeatSweep(ServiceManager services) {

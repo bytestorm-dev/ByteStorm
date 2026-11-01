@@ -4,8 +4,10 @@ import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.controller.ServiceController;
 import dev.bytestorm.node.lifecycle.ServiceLifecycleException;
 import dev.bytestorm.proto.ServiceInfo;
+import dev.bytestorm.proto.ServiceState;
 import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
+import org.jline.utils.NonBlockingReader;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -19,8 +21,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>Zeigt neue Logzeilen aus dem Ringpuffer des Nodes und leitet Eingaben an
  * die Service-Konsole weiter. {@code Ctrl+]} oder {@code Ctrl+C} beenden den
- * Screen; der Service läuft weiter. Logs werden gepollt, damit der Screen ohne
- * zusätzliche Redis-Verbindung funktioniert.
+ * Screen; der Service läuft weiter. Wird der Service gestoppt, gestürzt oder
+ * aus der Registry entfernt, endet der Screen von selbst — sonst stünde er auf
+ * einem toten Server und würde Befehle in ein beendetes Terminal schreiben.
+ * Logs werden gepollt, damit der Screen ohne zusätzliche Redis-Verbindung
+ * funktioniert.
  */
 final class ServiceScreen {
 
@@ -87,7 +92,6 @@ final class ServiceScreen {
                     Thread.currentThread().interrupt();
                 }
             }
-            terminal.setAttributes(previous);
             synchronized (output) {
                 PrintWriter writer = terminal.writer();
                 writer.print("\r\n");
@@ -95,6 +99,7 @@ final class ServiceScreen {
                 writer.flush();
                 terminal.flush();
             }
+            terminal.setAttributes(previous);
         }
     }
 
@@ -143,7 +148,16 @@ final class ServiceScreen {
 
     private void readCommands(ServiceId id) throws IOException {
         while (true) {
-            int read = terminal.reader().read();
+            int read = terminal.reader().read(POLL_MILLIS);
+            if (read == NonBlockingReader.READ_EXPIRED) {
+                // Kein Tastendruck: prüfen, ob der Service noch lebt (§17).
+                String ended = endedReason(id);
+                if (ended != null) {
+                    printLine(ended);
+                    return;
+                }
+                continue;
+            }
             if (read < 0 || read == DETACH || read == INTERRUPT) {
                 return;
             }
@@ -155,6 +169,31 @@ final class ServiceScreen {
                 append((char) read);
             }
         }
+    }
+
+    /**
+     * Prüft, ob der Service noch läuft. Der Screen endet mit dem Service.
+     *
+     * @param id Service-ID
+     * @return Hinweis, wenn der Service beendet oder entfernt ist, sonst {@code null}
+     */
+    private String endedReason(ServiceId id) {
+        ServiceState state;
+        try {
+            Optional<ServiceInfo> current = controller.byName(serviceName);
+            if (current.isEmpty() || !current.get().getId().equals(id.toString())) {
+                // Name neu vergeben oder Service aus der Registry entfernt.
+                return Theme.dim("Service " + serviceName + " ist beendet — Screen beendet.");
+            }
+            state = current.get().getState();
+        } catch (RuntimeException e) {
+            // Controller nicht erreichbar: der Screen bleibt offen.
+            return null;
+        }
+        if (state != ServiceState.STOPPED && state != ServiceState.CRASHED) {
+            return null;
+        }
+        return Theme.warn("Service " + serviceName + " ist " + state + " — Screen beendet.");
     }
 
     private void send(ServiceId id) {

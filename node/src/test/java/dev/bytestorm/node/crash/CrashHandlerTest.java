@@ -60,21 +60,22 @@ class CrashHandlerTest {
     void afterThreeCrashesTheGroupBecomesDegraded() {
         CrashHandler handler = handler(new CrashSettings(3, List.of(5, 15, 60)));
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 2; i++) {
             assertEquals(CrashHandler.Outcome.RESTART_SCHEDULED,
                     handler.crash(service(), temp.resolve("service"), 1, "crash", List.of()));
         }
         scheduler.runAll();
 
-        assertEquals(List.of(Duration.ofSeconds(5), Duration.ofSeconds(15), Duration.ofSeconds(60)), scheduler.delays);
-        assertEquals(3, actions.restarted.size());
+        assertEquals(List.of(Duration.ofSeconds(5), Duration.ofSeconds(15)), scheduler.delays);
+        assertEquals(2, actions.restarted.size());
 
         CrashHandler.Outcome outcome = handler.crash(service(), temp.resolve("service"), 1, "crash", List.of());
 
-        assertEquals(CrashHandler.Outcome.DEGRADED, outcome);
+        assertEquals(CrashHandler.Outcome.DEGRADED, outcome,
+                "nach drei Abstürzen in Folge startet der Node nicht noch einmal");
         assertEquals(List.of("Lobby"), actions.degraded);
-        assertEquals(4, events.size());
-        assertEquals(3, scheduler.delays.size(), "kein weiterer Neustart nach erschöpften Versuchen");
+        assertEquals(3, events.size());
+        assertEquals(2, scheduler.delays.size(), "kein weiterer Neustart nach erschöpften Versuchen");
     }
 
     @Test

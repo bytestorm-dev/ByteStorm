@@ -18,8 +18,8 @@ class RestartPolicyTest {
 
         assertEquals(Duration.ofSeconds(5), policy.nextBackoff().orElseThrow());
         assertEquals(Duration.ofSeconds(15), policy.nextBackoff().orElseThrow());
-        assertEquals(Duration.ofSeconds(60), policy.nextBackoff().orElseThrow());
-        assertTrue(policy.nextBackoff().isEmpty());
+        assertTrue(policy.nextBackoff().isEmpty(),
+                "der dritte Absturz in Folge beendet die Neustarts");
         assertTrue(policy.exhausted());
         assertEquals(3, policy.attempts());
     }
@@ -63,7 +63,6 @@ class RestartPolicyTest {
 
         assertEquals(Duration.ofSeconds(5), policy.nextBackoff().orElseThrow());
         assertEquals(Duration.ofSeconds(15), policy.nextBackoff().orElseThrow());
-        assertEquals(Duration.ofSeconds(60), policy.nextBackoff().orElseThrow());
         assertTrue(policy.nextBackoff().isEmpty());
     }
 }
