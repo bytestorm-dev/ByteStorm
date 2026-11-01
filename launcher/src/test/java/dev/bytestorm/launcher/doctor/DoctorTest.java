@@ -507,6 +507,41 @@ class DoctorTest {
                 && finding.severity() == Diagnostics.Severity.WARNING), findings.toString());
     }
 
+    @Test
+    void aServerGroupWithoutAnAcceptedEulaIsAWarning() throws IOException {
+        CloudLayout layout = new CloudLayout(root);
+        layout.create();
+        List<Diagnostics.Finding> findings = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(proxyGroup(), serverGroup("Lobby", true)),
+                () -> List.of(), () -> "ok", () -> "ok").run();
+
+        assertTrue(has(findings, "EULA", "eula.txt fehlt"), findings.toString());
+        assertTrue(has(findings, "EULA", "MinecraftEULA"),
+                "die Meldung nennt, wozu zugestimmt werden muss: " + findings);
+
+        Files.createDirectories(layout.templates().resolve("SERVER"));
+        Files.writeString(layout.templates().resolve("SERVER/eula.txt"), "eula=true\n");
+        List<Diagnostics.Finding> accepted = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(serverGroup("Lobby", true)),
+                () -> List.of(), () -> "ok", () -> "ok").run();
+
+        assertTrue(has(accepted, "EULA", "Zustimmung im Server-Template"), accepted.toString());
+        assertFalse(accepted.stream().anyMatch(finding -> finding.area().equals("EULA")
+                && finding.severity() == Diagnostics.Severity.WARNING), accepted.toString());
+    }
+
+    @Test
+    void aProxyOnlyCloudNeedsNoEula() throws IOException {
+        CloudLayout layout = new CloudLayout(root);
+        layout.create();
+
+        List<Diagnostics.Finding> findings = new Doctor(layout, CloudConfig::defaults,
+                () -> List.of(proxyGroup()), () -> List.of(), () -> "ok", () -> "ok").run();
+
+        assertFalse(findings.stream().anyMatch(finding -> finding.area().equals("EULA")),
+                "ein Proxy braucht keine Minecraft-EULA: " + findings);
+    }
+
     private static CloudConfig config(MongoSettings mongo, RedisSettings redis,
                                       SecuritySettings security) {
         return new CloudConfig(mongo, redis, null, null, null, null, null, null, null, security);

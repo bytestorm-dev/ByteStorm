@@ -47,9 +47,22 @@ class DefaultTemplatesTest {
         assertTrue(Files.isRegularFile(layout.templates().resolve("PROXY/velocity.toml")));
         assertTrue(Files.isRegularFile(layout.templates().resolve("PROXY/" + DefaultTemplates.SECRET_FILE)));
         assertTrue(Files.isRegularFile(layout.templates().resolve("SERVER/server.properties")));
-        assertTrue(Files.isRegularFile(layout.templates().resolve("SERVER/eula.txt")),
-                "ohne eula.txt beendet sich Paper nach dem Start und der Service crasht endlos");
+        assertFalse(Files.exists(layout.templates().resolve(DefaultTemplates.EULA_FILE)),
+                "die EULA-Zustimmung ist eine Erklärung des Betreibers und entsteht nie von selbst");
         assertTrue(Files.isRegularFile(layout.templates().resolve("SERVER/" + DefaultTemplates.PAPER_GLOBAL_CONFIG)));
+    }
+
+    @Test
+    void acceptingTheEulaWritesItIntoTheServerTemplate() throws Exception {
+        layout.create();
+
+        Path written = DefaultTemplates.acceptEula(layout);
+
+        assertEquals(layout.templates().resolve(DefaultTemplates.EULA_FILE), written);
+        String content = Files.readString(written);
+        assertTrue(content.contains("eula=true"), content);
+        assertTrue(content.contains("https://aka.ms/MinecraftEULA"),
+                "die Datei nennt, wozu sie da ist: " + content);
     }
 
     @Test

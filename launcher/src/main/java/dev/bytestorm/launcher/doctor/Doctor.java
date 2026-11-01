@@ -8,6 +8,7 @@ import dev.bytestorm.cli.Diagnostics.Severity;
 import dev.bytestorm.core.config.CloudConfig;
 import dev.bytestorm.core.config.PortSettings;
 import dev.bytestorm.launcher.layout.CloudLayout;
+import dev.bytestorm.launcher.layout.DefaultTemplates;
 import dev.bytestorm.launcher.layout.ServiceDirectories;
 import dev.bytestorm.node.template.ForwardingCheck;
 import dev.bytestorm.node.template.TemplateLayers;
@@ -162,7 +163,7 @@ public final class Doctor implements Diagnostics {
         }
         List<ServiceInfo> known = services.get();
         paths(findings);
-        templates(findings);
+        templates(findings, definitions);
         java(findings, current);
         ports(findings, current, known);
         connection(findings, "MongoDB", mongo);
@@ -252,7 +253,7 @@ public final class Doctor implements Diagnostics {
         }
     }
 
-    private void templates(List<Finding> findings) {
+    private void templates(List<Finding> findings, Map<String, ServiceGroup> definitions) {
         List<String> required = List.of(
                 TemplateLayers.PROXY + "/" + ForwardingCheck.VELOCITY_CONFIG,
                 TemplateLayers.PROXY + "/" + ForwardingCheck.DEFAULT_SECRET_FILE,
@@ -270,6 +271,50 @@ public final class Doctor implements Diagnostics {
             findings.add(new Finding(Severity.WARNING, "Templates",
                     "fehlen: " + String.join(", ", missing)
                             + " — neue Services starten ohne Port/Forwarding"));
+        }
+        eula(findings, definitions);
+    }
+
+    /**
+     * Paper startet ohne {@code eula.txt} nicht; der Prozess endet sofort nach dem
+     * Start, der Node startet im Backoff neu und markiert die Gruppe
+     * {@code DEGRADED} (§17). Die Meldung nennt den Weg zur Zustimmung, statt sie
+     * vorauszusetzen.
+     *
+     * <p>Geprüft wird nur, wenn überhaupt eine Server-Gruppe existiert: Eine reine
+     * Proxy-Cloud braucht keine EULA.
+     *
+     * @param findings    gesammelte Befunde
+     * @param definitions Gruppen nach Namen
+     */
+    private void eula(List<Finding> findings, Map<String, ServiceGroup> definitions) {
+        boolean needsEula = definitions.values().stream()
+                .anyMatch(group -> !Platforms.isProxy(group.getPlatform()));
+        if (!needsEula) {
+            return;
+        }
+        Path file = layout.templates().resolve(DefaultTemplates.EULA_FILE);
+        if (!Files.isRegularFile(file)) {
+            findings.add(new Finding(Severity.WARNING, "EULA",
+                    "templates/" + DefaultTemplates.EULA_FILE + " fehlt — Paper startet nicht;"
+                            + " 'eula accept' ausführen, den Erststart-Wizard wiederholen oder nach"
+                            + " Zustimmung zur Minecraft-EULA (https://aka.ms/MinecraftEULA) die Datei"
+                            + " mit 'eula=true' anlegen"));
+            return;
+        }
+        try {
+            String content = Files.readString(file);
+            if (content.lines().map(String::trim).anyMatch("eula=true"::equalsIgnoreCase)) {
+                findings.add(new Finding(Severity.OK, "EULA",
+                        "Zustimmung im Server-Template hinterlegt (" + DefaultTemplates.EULA_FILE + ")"));
+            } else {
+                findings.add(new Finding(Severity.WARNING, "EULA",
+                        "templates/" + DefaultTemplates.EULA_FILE + " enthält kein 'eula=true' —"
+                                + " Paper verweigert den Start, bis der Betreiber zustimmt"));
+            }
+        } catch (IOException e) {
+            findings.add(new Finding(Severity.WARNING, "EULA",
+                    "templates/" + DefaultTemplates.EULA_FILE + " nicht lesbar: " + e.getMessage()));
         }
     }
 

@@ -82,7 +82,8 @@ public final class ServiceCommandLine {
               updater versions|check|update    Cloud aktualisieren (updater help)
               backup [--out <datei>]|list      Mongo, config, templates und static sichern
               reload [config|groups]           Konfiguration und Gruppen-Cache neu laden
-              doctor [--fix]               Pfade, Ports, Java, Mongo/Redis, Forwarding und REST prüfen
+              eula status|accept|revoke    Minecraft-EULA-Zustimmung prüfen und ändern
+              doctor [--fix]               Pfade, Ports, Java, Mongo/Redis, Forwarding, REST und EULA prüfen
               info                         Agent-Status und Ressourcen
               clear                        Terminal leeren
               shutdown                     Cloud geordnet beenden (Alias stop)
@@ -99,6 +100,7 @@ public final class ServiceCommandLine {
     private final PlatformCommandLine platforms;
     private final UpdaterCommandLine updater;
     private final BackupCommandLine backup;
+    private final EulaCommandLine eula;
     private final HostMetrics hostMetrics;
     private final Diagnostics diagnostics;
     private final Instant startedAt;
@@ -128,7 +130,7 @@ public final class ServiceCommandLine {
      */
     public ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
                               TemplateCommandLine templates, PlayerCommandLine players) {
-        this(controller, groups, templates, players, null, null, null, null, null, null, null,
+        this(controller, groups, templates, players, null, null, null, null, null, null, null, null,
                 Instant.now(), Clock.systemUTC());
     }
 
@@ -147,7 +149,7 @@ public final class ServiceCommandLine {
                               ReloadCommandLine reload, ModuleCommandLine modules,
                               PlatformCommandLine platforms, UpdaterCommandLine updater) {
         this(controller, groups, templates, players, reload, modules, platforms, updater,
-                null, null, null, Instant.now(), Clock.systemUTC());
+                null, null, null, null, Instant.now(), Clock.systemUTC());
     }
 
     /**
@@ -211,17 +213,42 @@ public final class ServiceCommandLine {
                               HostMetrics hostMetrics, Diagnostics diagnostics,
                               BackupCommandLine backup) {
         this(controller, groups, templates, players, reload, modules, platforms, updater,
-                hostMetrics, diagnostics, backup, Instant.now(), Clock.systemUTC());
+                hostMetrics, diagnostics, backup, null);
+    }
+
+    /**
+     * @param controller  Controller-Fassade
+     * @param groups      Gruppen-Kommandos, {@code null} wenn nicht verfügbar
+     * @param templates   Template-Kommandos, {@code null} wenn nicht verfügbar
+     * @param players     Spieler-Kommandos, {@code null} wenn nicht verfügbar
+     * @param reload      {@code reload}, {@code null} wenn nicht verfügbar
+     * @param modules     Modul-Kommandos, {@code null} wenn nicht verfügbar
+     * @param platforms   Plattform-Kommandos, {@code null} wenn nicht verfügbar
+     * @param updater     Updater-Kommandos, {@code null} wenn nicht verfügbar
+     * @param hostMetrics Host-Auslastung für {@code status}, {@code null} wenn unbekannt
+     * @param diagnostics Prüfungen für {@code doctor}, {@code null} wenn nicht verfügbar
+     * @param backup      Sicherungen, {@code null} wenn nicht verfügbar
+     * @param eula        EULA-Verwaltung, {@code null} wenn nicht verfügbar
+     */
+    public ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
+                              TemplateCommandLine templates, PlayerCommandLine players,
+                              ReloadCommandLine reload, ModuleCommandLine modules,
+                              PlatformCommandLine platforms, UpdaterCommandLine updater,
+                              HostMetrics hostMetrics, Diagnostics diagnostics,
+                              BackupCommandLine backup, EulaCommandLine eula) {
+        this(controller, groups, templates, players, reload, modules, platforms, updater,
+                hostMetrics, diagnostics, backup, eula, Instant.now(), Clock.systemUTC());
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups, Instant startedAt, Clock clock) {
-        this(controller, groups, null, null, null, null, null, null, null, null, null, startedAt, clock);
+        this(controller, groups, null, null, null, null, null, null, null, null, null, null, startedAt, clock);
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
                        TemplateCommandLine templates, PlayerCommandLine players,
                        Instant startedAt, Clock clock) {
-        this(controller, groups, templates, players, null, null, null, null, null, null, null, startedAt, clock);
+        this(controller, groups, templates, players, null, null, null, null, null, null, null, null,
+                startedAt, clock);
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
@@ -229,7 +256,7 @@ public final class ServiceCommandLine {
                        ReloadCommandLine reload, ModuleCommandLine modules,
                        PlatformCommandLine platforms, UpdaterCommandLine updater,
                        HostMetrics hostMetrics, Diagnostics diagnostics, BackupCommandLine backup,
-                       Instant startedAt, Clock clock) {
+                       EulaCommandLine eula, Instant startedAt, Clock clock) {
         this.controller = Objects.requireNonNull(controller, "controller");
         this.groups = groups;
         this.templates = templates;
@@ -241,6 +268,7 @@ public final class ServiceCommandLine {
         this.hostMetrics = hostMetrics;
         this.diagnostics = diagnostics;
         this.backup = backup;
+        this.eula = eula;
         this.startedAt = Objects.requireNonNull(startedAt, "startedAt");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -267,6 +295,12 @@ public final class ServiceCommandLine {
         }
         if (tokens[0].equalsIgnoreCase("doctor")) {
             return doctor(tokens.length > 1 && tokens[1].equalsIgnoreCase("--fix"));
+        }
+        if (tokens[0].equalsIgnoreCase("eula")) {
+            if (eula == null) {
+                return Theme.warn("EULA-Verwaltung ist nicht verfügbar.");
+            }
+            return eula.execute(line.trim().split("\\s+"));
         }
         if (tokens[0].equalsIgnoreCase("group") || tokens[0].equalsIgnoreCase("maintenance")) {
             if (groups == null) {

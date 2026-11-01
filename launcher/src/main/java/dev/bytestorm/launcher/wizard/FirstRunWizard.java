@@ -14,6 +14,8 @@ import dev.bytestorm.core.config.RedisSettings;
 import dev.bytestorm.core.config.SecuritySettings;
 import dev.bytestorm.core.config.ScalingSettings;
 import dev.bytestorm.core.mongo.model.ModuleConfig;
+import dev.bytestorm.launcher.layout.CloudLayout;
+import dev.bytestorm.launcher.layout.DefaultTemplates;
 import dev.bytestorm.proto.RuntimeType;
 import dev.bytestorm.proto.ServiceGroup;
 
@@ -85,6 +87,8 @@ public final class FirstRunWizard {
     public static final String REST_API_KEY = "rest.apiKey";
     /** ID der Discord-Freigabe. */
     public static final String DISCORD = "modules.discord";
+    /** ID der EULA-Zustimmung. */
+    public static final String EULA = "minecraft.eula";
 
     private static final String PORT_MESSAGE = "Bitte eine Portnummer zwischen 1 und 65535 eingeben.";
     private static final String REST_KEY_MESSAGE =
@@ -151,6 +155,7 @@ public final class FirstRunWizard {
 
         ConfigWriter.write(configFile, config);
         io.message("Konfiguration gespeichert: " + configFile);
+        eula(cloudDirectory, answers);
 
         try {
             List<String> created = groupSetup.apply(config.mongo(), groups);
@@ -283,6 +288,13 @@ public final class FirstRunWizard {
                         .defaultValue(String.valueOf(PortSettings.DEFAULT_SERVER_START))
                         .validate(PORT)
                         .build(),
+                // Paper startet ohne eula.txt nicht. Die Zustimmung ist eine Erklärung
+                // gegenüber Mojang und wird deshalb gefragt, nie stillschweigend gesetzt (§17).
+                Question.confirm(EULA, "Minecraft-EULA akzeptieren?")
+                        .description("Paper startet nur mit Zustimmung zur Minecraft-EULA"
+                                + " (https://aka.ms/MinecraftEULA). Ja schreibt eula=true in das"
+                                + " Server-Template; Nein lässt es bei einem Hinweis.")
+                        .build(),
                 Question.confirm(REST, "REST-Modul aktivieren?")
                         .description("Stellt die öffentliche API über HTTP bereit.")
                         .build(),
@@ -309,6 +321,29 @@ public final class FirstRunWizard {
                         .build());
         return new Questionnaire("Ein paar Fragen zur Einrichtung",
                 "Die Antworten landen in config/cloud.json.", questions);
+    }
+
+    /**
+     * Hält die EULA-Zustimmung im Server-Template fest. Die Datei entsteht nur nach
+     * einem Ja; bei Nein bleibt der Hinweis stehen, damit niemand annimmt, Paper
+     * würde trotzdem starten.
+     *
+     * @param cloudDirectory Cloud-Verzeichnis
+     * @param answers        Antworten des Formulars
+     */
+    private void eula(Path cloudDirectory, Answers answers) {
+        if (!answers.flag(EULA)) {
+            io.message("Ohne EULA-Zustimmung startet kein Paper-Backend — nach Zustimmung"
+                    + " 'eula accept' ausführen oder templates/" + DefaultTemplates.EULA_FILE
+                    + " mit 'eula=true' anlegen.");
+            return;
+        }
+        try {
+            Path written = DefaultTemplates.acceptEula(new CloudLayout(cloudDirectory));
+            io.message("EULA-Zustimmung gespeichert: " + written);
+        } catch (IOException e) {
+            io.message("Hinweis: EULA-Zustimmung konnte nicht gespeichert werden: " + describe(e));
+        }
     }
 
     private static boolean restEnabled(Answers answers) {

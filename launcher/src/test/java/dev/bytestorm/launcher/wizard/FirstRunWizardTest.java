@@ -6,6 +6,7 @@ import dev.bytestorm.core.config.MongoSettings;
 import dev.bytestorm.core.config.PortSettings;
 import dev.bytestorm.core.config.RedisSettings;
 import dev.bytestorm.core.mongo.model.ModuleConfig;
+import dev.bytestorm.launcher.layout.DefaultTemplates;
 import dev.bytestorm.proto.RuntimeType;
 import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceMode;
@@ -146,6 +147,31 @@ class FirstRunWizardTest {
         assertEquals("discord", moduleCalls.get(0).name());
         assertTrue(moduleCalls.get(0).enabled());
         assertEquals(Map.of(), Map.copyOf(moduleCalls.get(0).settings()));
+    }
+
+    @Test
+    void acceptingTheEulaWritesTheConsentIntoTheServerTemplate() throws Exception {
+        ScriptedWizardIo io = minimalAnswers();
+
+        wizard(io).run(temp);
+
+        Path eula = temp.resolve("templates").resolve(DefaultTemplates.EULA_FILE);
+        assertTrue(Files.isRegularFile(eula), "ohne eula.txt startet kein Paper-Backend");
+        assertTrue(Files.readString(eula).contains("eula=true"));
+        assertTrue(io.messages().stream().anyMatch(message -> message.contains("EULA-Zustimmung gespeichert")),
+                io.messages().toString());
+    }
+
+    @Test
+    void decliningTheEulaLeavesNoConsentFileAndSaysSo() throws Exception {
+        ScriptedWizardIo io = minimalAnswers().answer("EULA", "n");
+
+        wizard(io).run(temp);
+
+        assertFalse(Files.exists(temp.resolve("templates").resolve(DefaultTemplates.EULA_FILE)),
+                "ohne Zustimmung darf keine eula.txt entstehen");
+        assertTrue(io.messages().stream().anyMatch(message -> message.contains("Ohne EULA-Zustimmung")),
+                io.messages().toString());
     }
 
     @Test
@@ -347,6 +373,7 @@ class FirstRunWizardTest {
                 .answer("Runtime", "PROCESS")
                 .answer("Proxy-Port", "")
                 .answer("Server-Startport", "")
+                .answer("EULA", "j")
                 .answer("REST-Modul", "n")
                 .answer("Discord-Modul", "n");
     }

@@ -5,6 +5,7 @@ import dev.bytestorm.api.health.CloudHealth;
 import dev.bytestorm.api.service.PortRange;
 import dev.bytestorm.api.service.ServiceId;
 import dev.bytestorm.cli.BackupCommandLine;
+import dev.bytestorm.cli.EulaCommandLine;
 import dev.bytestorm.cli.GroupCommandLine;
 import dev.bytestorm.cli.ModuleCommandLine;
 import dev.bytestorm.cli.PlatformCommandLine;
@@ -335,7 +336,9 @@ public final class Bootstrap implements AutoCloseable {
                             () -> RestExposure.of(modules)),
                     // Sicherung von MongoDB, config/, templates/ und static/ (§15).
                     new BackupCommandLine(new CloudBackup(layout,
-                            CloudBackup.mongoExporter(mongo.database())), layout.backups()));
+                            CloudBackup.mongoExporter(mongo.database())), layout.backups()),
+                    // Zustimmung zur Minecraft-EULA nachträglich ändern (§17).
+                    new EulaCommandLine(directory));
             log.info("Node-ServiceManager bereit (Runtime {}, Logs {}, Scaling {} s)",
                     config.runtime(), layout.logs(), config.scaling().intervalSeconds());
 

@@ -1,5 +1,6 @@
 package dev.bytestorm.launcher.layout;
 
+import dev.bytestorm.core.template.Eula;
 import lombok.experimental.UtilityClass;
 import lombok.extern.slf4j.Slf4j;
 
@@ -24,6 +25,12 @@ import java.util.List;
  * Betreibers bleiben erhalten; fehlende werden ergänzt. Fehler beim Anlegen sind
  * nicht tödlich: die Cloud startet auch ohne Templates, dann fehlen nur Port und
  * Forwarding in den Service-Ordnern.
+ *
+ * <p>Eine Ausnahme ist die Minecraft-EULA: Ohne {@code eula.txt} startet Paper
+ * nicht, die Zustimmung ist aber eine Erklärung des Betreibers gegenüber Mojang.
+ * Deshalb entsteht die Datei nicht automatisch, sondern erst, wenn der
+ * Erststart-Wizard sie abgefragt und der Betreiber zugestimmt hat
+ * ({@link #acceptEula}).
  */
 @Slf4j
 @UtilityClass
@@ -37,6 +44,12 @@ public final class DefaultTemplates {
 
     /** Paper-Konfiguration mit dem Abschnitt {@code proxies.velocity}. */
     public static final String PAPER_GLOBAL_CONFIG = "config/paper-global.yml";
+
+    /** EULA-Zustimmung im Server-Template; entsteht nur nach ausdrücklicher Zustimmung. */
+    public static final String EULA_FILE = Eula.FILE;
+
+    /** Inhalt der EULA-Zustimmung; Paper liest nur die Zeile {@code eula=}. */
+    public static final String EULA_CONTENT = Eula.content(true);
 
     private static final List<File> FILES = List.of(
             new File("PROXY/velocity.toml", """
@@ -79,16 +92,6 @@ public final class DefaultTemplates {
                     online-mode=false
                     server-port=%PORT%
                     """),
-            // Ohne diese Datei schreibt sich Paper beim Start selbst eine eula.txt mit
-            // eula=false und beendet sich sofort ("You need to agree to the EULA"). Der
-            // Node sieht nur einen Exit unmittelbar nach dem Start, startet im Backoff neu
-            // und killt nach dem dritten Versuch die ganze Gruppe als DEGRADED — genau das
-            // Fehlerbild "Server stürzen dauernd ab".
-            new File("SERVER/eula.txt", """
-                    # Von ByteStorm angelegtes Standard-Template.
-                    # eula=true ist die Zustimmung zur Minecraft-EULA (https://aka.ms/MinecraftEULA).
-                    eula=true
-                    """),
             new File("SERVER/" + PAPER_GLOBAL_CONFIG, """
                     # Von ByteStorm angelegtes Standard-Template. Anpassungen bleiben erhalten.
                     # Modern Forwarding (§14): enabled + Secret wie in forwarding.secret des Proxys,
@@ -123,6 +126,20 @@ public final class DefaultTemplates {
             created.add(target);
         }
         return List.copyOf(created);
+    }
+
+    /**
+     * Schreibt die EULA-Zustimmung in das Server-Template und in bestehende
+     * Service-Ordner. Nur nach ausdrücklicher Zustimmung aufrufen: Ohne
+     * {@code eula.txt} verweigert Paper den Start und der Service crasht im
+     * Backoff, bis die Gruppe {@code DEGRADED} ist (§17).
+     *
+     * @param layout Cloud-Layout mit {@code templates/}
+     * @return die geschriebene Datei im Template
+     * @throws IOException wenn die Datei nicht geschrieben werden kann
+     */
+    public static Path acceptEula(CloudLayout layout) throws IOException {
+        return Eula.accept(layout.root()).get(0);
     }
 
     /**
