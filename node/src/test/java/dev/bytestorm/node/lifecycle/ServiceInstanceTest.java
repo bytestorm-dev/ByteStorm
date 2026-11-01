@@ -85,6 +85,20 @@ class ServiceInstanceTest {
     }
 
     @Test
+    void aProcessThatSurvivesTheStopKeepsItsPort() throws Exception {
+        runtime.stubborn = true;
+        ServiceInstance instance = instance(ServiceMode.DYNAMIC, false);
+        instance.start();
+
+        instance.stop(Duration.ofSeconds(5), false);
+
+        assertEquals(ServiceState.STOPPED, instance.info().getState());
+        assertFalse(leases.get(0).released(),
+                "solange der Prozess läuft, darf der Port nicht neu vergeben werden");
+        assertTrue(releasedPorts.isEmpty(), "kein Port wurde freigegeben");
+    }
+
+    @Test
     void staticServiceKeepsItsDirectory() throws Exception {
         ServiceInstance instance = instance(ServiceMode.STATIC, false);
         instance.start();
@@ -258,6 +272,7 @@ class ServiceInstanceTest {
         private boolean stopped;
         private boolean killed;
         private boolean failStart;
+        private boolean stubborn;
         private java.util.concurrent.CompletableFuture<Integer> exit;
 
         @Override
@@ -274,6 +289,9 @@ class ServiceInstanceTest {
         @Override
         public void stop(ServiceHandle handle, Duration timeout) {
             stopped = true;
+            if (stubborn) {
+                return;
+            }
             alive = false;
             exit.complete(0);
         }
@@ -281,6 +299,9 @@ class ServiceInstanceTest {
         @Override
         public void kill(ServiceHandle handle) {
             killed = true;
+            if (stubborn) {
+                return;
+            }
             alive = false;
             exit.complete(0);
         }

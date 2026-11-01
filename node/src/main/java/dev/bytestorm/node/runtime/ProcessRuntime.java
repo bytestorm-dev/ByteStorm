@@ -161,6 +161,13 @@ public final class ProcessRuntime implements ServiceRuntime, ExitAware, CommandA
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        if (running.process.isAlive()) {
+            // Der Port bleibt dann belegt; ohne diese Meldung sucht der Betreiber
+            // den Grund beim Port-Pool statt beim Prozess.
+            log.error("Service '{}' läuft nach dem Kill weiter (PID {}) — der Port bleibt belegt",
+                    running.launch.name(), running.process.pid());
+            return;
+        }
         log.info("Service '{}' gekillt", running.launch.name());
     }
 

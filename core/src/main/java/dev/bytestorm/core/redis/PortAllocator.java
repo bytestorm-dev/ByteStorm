@@ -8,6 +8,7 @@ import org.redisson.api.RedissonClient;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
+import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -21,6 +22,17 @@ import java.util.concurrent.TimeUnit;
 public final class PortAllocator {
 
     private static final long LOCK_WAIT_SECONDS = 5;
+
+    /**
+     * Frist, in der ein gerade gestoppter Dienst seinen Port noch halten kann:
+     * Der Prozess ist beendet, der Listener braucht aber einen Moment, bis das
+     * Betriebssystem den Port wieder freigibt. Ohne dieses Warten scheitert der
+     * Neustart direkt nach einem Stop mit "Kein freier Port".
+     */
+    private static final Duration PORT_WAIT = Duration.ofSeconds(3);
+
+    /** Abstand zwischen zwei Versuchen, solange der Port noch belegt wirkt. */
+    private static final long RETRY_MILLIS = 100;
 
     private final RSet<Integer> used;
     private final RLock lock;
@@ -43,16 +55,54 @@ public final class PortAllocator {
     public int allocate(PortRange range) {
         acquireLock();
         try {
-            for (int port = range.start(); port <= range.end(); port++) {
-                if (!used.contains(port) && isLocallyFree(port)) {
-                    used.add(port);
-                    return port;
+            long deadline = System.nanoTime() + PORT_WAIT.toNanos();
+            while (true) {
+                Integer free = firstFree(range);
+                if (free != null) {
+                    used.add(free);
+                    return free;
+                }
+                // Sind alle Ports in Redis reserviert, hilft Warten nicht.
+                if (firstUnreserved(range) == null || System.nanoTime() >= deadline) {
+                    break;
+                }
+                try {
+                    Thread.sleep(RETRY_MILLIS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new PortExhaustedException("Unterbrochen beim Warten auf einen freien Port");
                 }
             }
         } finally {
             releaseLock();
         }
         throw new PortExhaustedException("Kein freier Port in " + range.start() + "-" + range.end());
+    }
+
+    /**
+     * @param range erlaubter Bereich
+     * @return der erste Port, der weder reserviert noch lokal belegt ist
+     */
+    private Integer firstFree(PortRange range) {
+        for (int port = range.start(); port <= range.end(); port++) {
+            if (!used.contains(port) && isLocallyFree(port)) {
+                return port;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @param range erlaubter Bereich
+     * @return der erste Port ohne Reservierung in Redis, auch wenn er lokal belegt ist
+     */
+    private Integer firstUnreserved(PortRange range) {
+        for (int port = range.start(); port <= range.end(); port++) {
+            if (!used.contains(port)) {
+                return port;
+            }
+        }
+        return null;
     }
 
     /**

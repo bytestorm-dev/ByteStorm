@@ -218,8 +218,16 @@ public final class ServiceInstance {
             throw new ServiceLifecycleException("Service '" + definition.name()
                     + "' konnte nicht gestoppt werden: " + e.getMessage(), e);
         } finally {
+            // Ein Prozess, der den Stop überlebt hat, hält seinen Listener weiter:
+            // Die Reservierung bleibt dann bestehen, statt denselben Port einem
+            // zweiten Service zu geben, der daraufhin scheitert.
             if (port != null) {
-                port.close();
+                if (handle == null || !handle.isAlive()) {
+                    port.close();
+                } else {
+                    log.error("Service '{}' läuft nach dem Stop weiter (PID {}) — Port {} bleibt reserviert",
+                            definition.name(), handle.nativeId(), port.port());
+                }
             }
             cleanup();
             transition(ServiceState.STOPPED);
