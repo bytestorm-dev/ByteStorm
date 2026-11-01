@@ -73,6 +73,9 @@ class ServiceScreenTest {
         try {
             controller.info = controller.info.toBuilder().setState(ServiceState.STOPPED).build();
             new ServiceScreen(controller, terminal).run("Lobby-1");
+            // JLine reicht den Strom im Hintergrund weiter; erst wenn die letzte
+            // Zeile angekommen ist, ist der Mitschnitt vollständig.
+            awaitText(output, "Screen Lobby-1 beendet");
             text = output.toString(StandardCharsets.UTF_8);
         } finally {
             terminal.close();

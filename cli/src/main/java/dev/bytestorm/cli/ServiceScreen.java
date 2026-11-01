@@ -77,6 +77,12 @@ final class ServiceScreen {
             printLine(Theme.accent(Theme.unicode() ? "▎" : "|") + " " + Theme.bold("Screen " + serviceName)
                     + Theme.dim("  ·  ") + Theme.serviceState(state)
                     + Theme.dim("  ·  Strg+] oder Strg+C beendet"));
+            if (state == ServiceState.STOPPED || state == ServiceState.CRASHED) {
+                // Ein beendeter Service braucht keinen Reader: Grund nennen und über
+                // das finally schließen — unabhängig davon, was das Terminal liefert.
+                printLine(stoppedMessage(state));
+                return;
+            }
             follower = Thread.ofVirtual()
                     .name("bytestorm-screen-" + serviceName)
                     .start(() -> follow(id, running));
@@ -198,6 +204,14 @@ final class ServiceScreen {
         if (state != ServiceState.STOPPED && state != ServiceState.CRASHED) {
             return null;
         }
+        return stoppedMessage(state);
+    }
+
+    /**
+     * @param state Zustand, in dem der Screen endet
+     * @return Meldung, die den Grund nennt
+     */
+    private String stoppedMessage(ServiceState state) {
         return Theme.warn("Service " + serviceName + " ist " + state + " — Screen beendet.");
     }
 
