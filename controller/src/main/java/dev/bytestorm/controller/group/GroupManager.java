@@ -1,5 +1,6 @@
 package dev.bytestorm.controller.group;
 
+import dev.bytestorm.api.service.Platforms;
 import dev.bytestorm.controller.scaling.CronSchedule;
 import dev.bytestorm.core.config.PortSettings;
 import dev.bytestorm.core.mongo.repository.GroupStore;
@@ -213,6 +214,12 @@ public final class GroupManager {
             problems.add("platform ist Pflicht (z. B. paper, velocity)");
         } else if (platform.contains("/") || platform.contains("\\")) {
             problems.add("platform darf keine Pfadtrenner enthalten: '" + platform + "'");
+        } else if (Platforms.isProxy(platform) && group.getType() != ServiceType.PROXY) {
+            // Sonst startet ein Velocity-Jar als Server-Gruppe: falsche Templates, falscher
+            // Port-Pool und kein Proxy für die Backends.
+            problems.add("platform '" + platform + "' ist eine Proxy-Plattform — type PROXY setzen");
+        } else if (!Platforms.isProxy(platform) && group.getType() == ServiceType.PROXY) {
+            problems.add("type PROXY braucht eine Proxy-Plattform (z. B. velocity), nicht '" + platform + "'");
         }
 
         if (group.getMaxServices() > 0 && group.getMinServices() > group.getMaxServices()) {

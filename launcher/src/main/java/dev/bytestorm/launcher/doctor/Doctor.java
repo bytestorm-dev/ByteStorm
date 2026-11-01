@@ -1,5 +1,6 @@
 package dev.bytestorm.launcher.doctor;
 
+import dev.bytestorm.api.service.Platforms;
 import dev.bytestorm.cli.Diagnostics;
 import dev.bytestorm.cli.Diagnostics.Finding;
 import dev.bytestorm.cli.Diagnostics.Severity;
@@ -10,6 +11,7 @@ import dev.bytestorm.launcher.layout.ServiceDirectories;
 import dev.bytestorm.node.template.ForwardingCheck;
 import dev.bytestorm.node.template.TemplateLayers;
 import dev.bytestorm.proto.RuntimeType;
+import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceState;
 import dev.bytestorm.proto.ServiceType;
@@ -56,6 +58,7 @@ public final class Doctor implements Diagnostics {
 
     private final CloudLayout layout;
     private final Supplier<CloudConfig> config;
+    private final Supplier<List<ServiceGroup>> groups;
     private final Supplier<List<ServiceInfo>> services;
     private final Probe mongo;
     private final Probe redis;
@@ -63,14 +66,17 @@ public final class Doctor implements Diagnostics {
     /**
      * @param layout   Verzeichnislayout der Cloud
      * @param config   aktive Konfiguration
+     * @param groups   Gruppen-Definitionen mit Plattform und Typ
      * @param services registrierte Services
      * @param mongo    Mongo-Prüfung
      * @param redis    Redis-Prüfung
      */
     public Doctor(CloudLayout layout, Supplier<CloudConfig> config,
-                  Supplier<List<ServiceInfo>> services, Probe mongo, Probe redis) {
+                  Supplier<List<ServiceGroup>> groups, Supplier<List<ServiceInfo>> services,
+                  Probe mongo, Probe redis) {
         this.layout = Objects.requireNonNull(layout, "layout");
         this.config = Objects.requireNonNull(config, "config");
+        this.groups = Objects.requireNonNull(groups, "groups");
         this.services = Objects.requireNonNull(services, "services");
         this.mongo = Objects.requireNonNull(mongo, "mongo");
         this.redis = Objects.requireNonNull(redis, "redis");
@@ -80,6 +86,10 @@ public final class Doctor implements Diagnostics {
     public List<Finding> run() {
         List<Finding> findings = new ArrayList<>();
         CloudConfig current = config.get();
+        Map<String, ServiceGroup> definitions = new HashMap<>();
+        for (ServiceGroup group : groups.get()) {
+            definitions.put(group.getName(), group);
+        }
         List<ServiceInfo> known = services.get();
         paths(findings);
         templates(findings);
@@ -88,7 +98,7 @@ public final class Doctor implements Diagnostics {
         connection(findings, "MongoDB", mongo);
         connection(findings, "Redis", redis);
         addresses(findings, known);
-        forwarding(findings, known, current.proxy().forwardingSecret());
+        forwarding(findings, known, definitions, current.proxy().forwardingSecret());
         return List.copyOf(findings);
     }
 
@@ -267,11 +277,37 @@ public final class Doctor implements Diagnostics {
         }
     }
 
-    private void forwarding(List<Finding> findings, List<ServiceInfo> known, String secret) {
+    /**
+     * Die Rolle eines Services kommt aus seiner Gruppe: Eine Velocity-Gruppe ist ein
+     * Proxy, auch wenn sie als SERVER angelegt wurde. Genau dieser Widerspruch wird
+     * gemeldet, statt das Paper-Backend in einem Proxy-Ordner zu suchen.
+     */
+    private void forwarding(List<Finding> findings, List<ServiceInfo> known,
+                            Map<String, ServiceGroup> definitions, String secret) {
         Map<String, Path> proxies = new LinkedHashMap<>();
         Map<String, Path> backends = new LinkedHashMap<>();
         List<String> withoutDirectory = new ArrayList<>();
+        boolean hasProxyGroup = false;
         for (ServiceInfo info : known) {
+            ServiceGroup group = definitions.get(info.getGroup());
+            boolean proxy = group == null
+                    ? info.getType() == ServiceType.PROXY
+                    : group.getType() == ServiceType.PROXY;
+            // Auch eine falsch typisierte Velocity-Gruppe ist als Proxy gemeint: Der
+            // Hinweis auf einen fehlenden Proxy wäre hier nur ein Folgefehler.
+            if (proxy || (group != null && Platforms.isProxy(group.getPlatform()))) {
+                hasProxyGroup = true;
+            }
+            if (group != null && Platforms.isProxy(group.getPlatform()) != proxy) {
+                boolean platformIsProxy = Platforms.isProxy(group.getPlatform());
+                findings.add(new Finding(Severity.ERROR, "Forwarding",
+                        "Gruppe '" + group.getName() + "' ist als " + group.getType()
+                                + " angelegt, die Plattform '" + group.getPlatform() + "' ist aber "
+                                + (platformIsProxy ? "eine Proxy-Plattform" : "eine Server-Plattform")
+                                + " — mit --type " + (platformIsProxy ? "PROXY" : "SERVER")
+                                + " korrigieren"));
+                continue;
+            }
             Optional<Path> directory = ServiceDirectories.directory(layout, info.getName());
             if (directory.isEmpty()) {
                 if (info.getState() != ServiceState.STOPPED) {
@@ -279,7 +315,7 @@ public final class Doctor implements Diagnostics {
                 }
                 continue;
             }
-            if (info.getType() == ServiceType.PROXY) {
+            if (proxy) {
                 proxies.put(info.getName(), directory.get());
             } else {
                 backends.put(info.getName(), directory.get());
@@ -290,8 +326,10 @@ public final class Doctor implements Diagnostics {
                     "Ordner fehlt: " + String.join(", ", withoutDirectory)));
         }
         if (proxies.isEmpty() && backends.isEmpty()) {
-            findings.add(new Finding(Severity.WARNING, "Forwarding",
-                    "keine Service-Ordner gefunden — noch nichts gestartet?"));
+            if (!hasProxyGroup) {
+                findings.add(new Finding(Severity.WARNING, "Forwarding",
+                        "keine Service-Ordner gefunden — noch nichts gestartet?"));
+            }
             return;
         }
 
@@ -309,7 +347,7 @@ public final class Doctor implements Diagnostics {
                         mismatch.service() + ": " + mismatch.message()));
             }
         }
-        if (proxies.isEmpty()) {
+        if (proxies.isEmpty() && !hasProxyGroup) {
             findings.add(new Finding(Severity.WARNING, "Forwarding",
                     "kein Proxy gefunden — die Backends warten auf einen Proxy"));
         }

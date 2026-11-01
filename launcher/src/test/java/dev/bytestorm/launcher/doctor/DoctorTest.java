@@ -4,6 +4,7 @@ import dev.bytestorm.cli.Diagnostics;
 import dev.bytestorm.core.config.CloudConfig;
 import dev.bytestorm.launcher.layout.CloudLayout;
 import dev.bytestorm.node.template.ForwardingCheck;
+import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceState;
 import dev.bytestorm.proto.ServiceType;
@@ -15,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DoctorTest {
@@ -38,6 +40,7 @@ class DoctorTest {
 
         Doctor doctor = new Doctor(layout,
                 () -> CloudConfig.defaults().withForwardingSecret("richtig"),
+                () -> List.of(),
                 () -> List.of(service("Proxy-1", ServiceType.PROXY, 25565),
                         service("Lobby-1", ServiceType.SERVER, 30001),
                         service("Lobby-2", ServiceType.SERVER, 30001)),
@@ -54,10 +57,35 @@ class DoctorTest {
     }
 
     @Test
+    void reportsAServerGroupOnAProxyPlatform() {
+        CloudLayout layout = new CloudLayout(root);
+        ServiceGroup proxyAsServer = ServiceGroup.newBuilder()
+                .setName("Proxy")
+                .setType(ServiceType.SERVER)
+                .setPlatform("velocity")
+                .build();
+
+        Doctor doctor = new Doctor(layout,
+                () -> CloudConfig.defaults().withForwardingSecret("gemeinsam"),
+                () -> List.of(proxyAsServer),
+                () -> List.of(service("Proxy-1", "Proxy", ServiceType.SERVER, 30000)),
+                () -> "ok", () -> "ok");
+
+        List<Diagnostics.Finding> findings = doctor.run();
+
+        assertTrue(has(findings, "Forwarding", "Gruppe 'Proxy' ist als SERVER angelegt"),
+                findings.toString());
+        assertFalse(has(findings, "Forwarding", "paper-global.yml"),
+                "eine Velocity-Gruppe ist kein Paper-Backend: " + findings);
+        assertFalse(has(findings, "Forwarding", "kein Proxy gefunden"),
+                "die Gruppe ist als Proxy gemeint: " + findings);
+    }
+
+    @Test
     void unreachableDatabaseIsReportedInsteadOfFailing() {
         CloudLayout layout = new CloudLayout(root);
 
-        Doctor doctor = new Doctor(layout, CloudConfig::defaults, () -> List.of(),
+        Doctor doctor = new Doctor(layout, CloudConfig::defaults, () -> List.of(), () -> List.of(),
                 () -> {
                     throw new IllegalStateException("keine Verbindung");
                 },
@@ -86,6 +114,7 @@ class DoctorTest {
 
         Doctor doctor = new Doctor(layout,
                 () -> CloudConfig.defaults().withForwardingSecret("gemeinsam"),
+                () -> List.of(),
                 () -> List.of(service("Proxy-1", ServiceType.PROXY, 25565),
                         service("Lobby-1", ServiceType.SERVER, 30001)),
                 () -> "ok", () -> "ok");
@@ -97,9 +126,13 @@ class DoctorTest {
     }
 
     private static ServiceInfo service(String name, ServiceType type, int port) {
+        return service(name, type == ServiceType.PROXY ? "Proxy" : "Lobby", type, port);
+    }
+
+    private static ServiceInfo service(String name, String group, ServiceType type, int port) {
         return ServiceInfo.newBuilder()
                 .setName(name)
-                .setGroup(type == ServiceType.PROXY ? "Proxy" : "Lobby")
+                .setGroup(group)
                 .setHost("127.0.0.1")
                 .setPort(port)
                 .setState(ServiceState.ONLINE)

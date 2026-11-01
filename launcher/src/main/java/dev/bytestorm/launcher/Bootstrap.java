@@ -51,6 +51,7 @@ import dev.bytestorm.launcher.layout.ServiceDirectories;
 import dev.bytestorm.launcher.luckperms.LuckPermsInstaller;
 import dev.bytestorm.launcher.platform.PlatformDownloader;
 import dev.bytestorm.launcher.scaling.ServiceProvisioner;
+import dev.bytestorm.launcher.update.UpdateNotifier;
 import dev.bytestorm.launcher.wizard.DefaultConnectionTester;
 import dev.bytestorm.launcher.wizard.DefaultGroups;
 import dev.bytestorm.launcher.wizard.DefaultModules;
@@ -278,6 +279,8 @@ public final class Bootstrap implements AutoCloseable {
             // Plattform-Jars kommen weiterhin aus platforms/, die CLI liest dasselbe Verzeichnis (§13).
             PlatformDownloader platformDownloader = new PlatformDownloader(layout.platforms());
             Updater updater = new Updater(directory);
+            // Einmalige Prüfung im Hintergrund: nur ein Hinweis im Log, kein automatisches Update (§17).
+            UpdateNotifier.checkInBackground(updater);
             ServiceCommandLine commandLine = new ServiceCommandLine(controller,
                     new GroupCommandLine(groups, scaling),
                     new TemplateCommandLine(templates),
@@ -290,7 +293,7 @@ public final class Bootstrap implements AutoCloseable {
                     // Dieselbe Messquelle wie das Scaling: CPU und RAM im Dashboard (§17).
                     new SystemHostMetrics(),
                     // `doctor` prüft Pfade, Ports, Java, Datenbanken, Adressen und Forwarding (§14).
-                    new Doctor(layout, configService::current, controller::services,
+                    new Doctor(layout, configService::current, groups::all, controller::services,
                             () -> timed(mongo::ping), () -> timed(redis::ping)));
             log.info("Node-ServiceManager bereit (Runtime {}, Logs {}, Scaling {} s)",
                     config.runtime(), layout.logs(), config.scaling().intervalSeconds());
