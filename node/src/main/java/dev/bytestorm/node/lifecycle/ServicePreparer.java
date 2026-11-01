@@ -43,6 +43,19 @@ public interface ServicePreparer {
     }
 
     /**
+     * Wendet Templates erneut an und setzt {@code %PORT%} auf den zuletzt
+     * vergebenen Port. Ohne ihn bliebe der Platzhalter stehen, weil ein gestoppter
+     * Service keinen Port mehr hält.
+     *
+     * @param definition Service
+     * @param port       zuletzt vergebener Port oder {@code 0}, wenn keiner bekannt ist
+     * @throws IOException wenn das erneute Anwenden fehlschlägt
+     */
+    default void reapply(ServiceDefinition definition, int port) throws IOException {
+        reapply(definition);
+    }
+
+    /**
      * Entfernt den Service-Ordner eines dynamischen Services.
      *
      * @param definition Service

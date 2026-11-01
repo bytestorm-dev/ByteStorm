@@ -20,6 +20,8 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static dev.bytestorm.node.template.TemplatePreparer.PREPARED_MARKER;
+
 /**
  * Verwaltet die Template-Ordner unter {@code templates/} (§10, §17).
  *
@@ -211,6 +213,10 @@ public final class TemplateManager {
      * @return {@code true}, wenn die Datei beim Rück-Sync ausgelassen wird
      */
     private static boolean skipOnSync(Path relative) {
+        if (relative.getNameCount() == 1 && relative.getFileName().toString().equals(PREPARED_MARKER)) {
+            // Gehört zur Vorbereitung, nicht zur Konfiguration des Services.
+            return true;
+        }
         String first = relative.getName(0).toString();
         if (RUNTIME_DIRECTORIES.contains(first) || first.startsWith("world")) {
             return true;

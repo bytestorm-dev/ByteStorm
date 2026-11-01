@@ -298,7 +298,8 @@ public final class ServiceInstance {
             throw new IllegalStateException("Service '" + definition.name() + "' läuft (Zustand " + state + ")");
         }
         try {
-            preparer.reapply(definition);
+            // Der Port ist beim Stop freigegeben, den letzten kennt aber noch der Service-Status.
+            preparer.reapply(definition, info.getPort());
         } catch (IOException e) {
             throw new ServiceLifecycleException("Templates von '" + definition.name()
                     + "' konnten nicht erneut angewendet werden: " + e.getMessage(), e);

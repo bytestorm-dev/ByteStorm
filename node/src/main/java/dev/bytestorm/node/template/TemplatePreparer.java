@@ -44,6 +44,18 @@ public final class TemplatePreparer implements ServicePreparer {
     /** Größere Dateien gelten als binär und werden nicht durchsucht. */
     private static final long MAX_TEXT_BYTES = 1024 * 1024;
 
+    /**
+     * Merkt in einem statischen Service-Ordner, dass die Templates schon einmal
+     * angewendet wurden.
+     *
+     * <p>Früher entschied der bloße Inhalt des Ordners darüber. Damit galt der
+     * Proxy als fertig vorbereitet, sobald die LuckPerms-Jar in {@code plugins/}
+     * lag — er bekam nie sein {@code velocity.toml} und Velocity schrieb sich
+     * seine eigene Vorgabe mit {@code player-info-forwarding-mode = "NONE"} und
+     * einem eigenen Secret. Die Backends wiesen danach jede Verbindung ab.
+     */
+    public static final String PREPARED_MARKER = ".bytestorm-prepared";
+
     private final Path templatesRoot;
     private final String forwardingSecret;
     private final DirectoryPreparer cleanup = new DirectoryPreparer();
@@ -72,16 +84,36 @@ public final class TemplatePreparer implements ServicePreparer {
 
     @Override
     public void prepare(ServiceDefinition definition, int port) throws IOException {
+        apply(definition, port, false);
+    }
+
+    /**
+     * Wendet die Templates auf Befehl erneut an — auch auf einen statischen
+     * Ordner, der schon vorbereitet ist. Nur die Dateien der Template-Ebenen
+     * werden ersetzt; Jar-Dateien, Welten und eigene Konfigurationen bleiben.
+     */
+    @Override
+    public void reapply(ServiceDefinition definition) throws IOException {
+        apply(definition, 0, true);
+    }
+
+    @Override
+    public void reapply(ServiceDefinition definition, int port) throws IOException {
+        apply(definition, port, true);
+    }
+
+    private void apply(ServiceDefinition definition, int port, boolean force) throws IOException {
         Objects.requireNonNull(definition, "definition");
         Path directory = definition.directory();
-        boolean existed = Files.isDirectory(directory) && hasContent(directory);
         Files.createDirectories(directory);
-        if (!definition.dynamic() && existed) {
+        Path marker = directory.resolve(PREPARED_MARKER);
+        if (!force && !definition.dynamic() && Files.isRegularFile(marker)) {
             // Statisch: der Ordner bleibt bestehen, Templates nur beim ersten Anlegen.
             return;
         }
 
         TemplateContext context = TemplateContext.of(definition, port, forwardingSecret);
+        boolean applied = false;
         for (String layer : TemplateLayers.forGroup(definition.group())) {
             Path template = templatesRoot.resolve(layer).normalize();
             if (!template.startsWith(templatesRoot)) {
@@ -90,7 +122,14 @@ public final class TemplatePreparer implements ServicePreparer {
             }
             if (Files.isDirectory(template)) {
                 applyLayer(template, directory, context);
+                applied = true;
             }
+        }
+        if (applied) {
+            // Erst nach vollständigem Kopieren: ein Abbruch soll den nächsten Start
+            // die Templates erneut anwenden lassen.
+            Files.writeString(marker, "", StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
         }
     }
 
@@ -175,9 +214,4 @@ public final class TemplatePreparer implements ServicePreparer {
         }
     }
 
-    private static boolean hasContent(Path directory) throws IOException {
-        try (var entries = Files.list(directory)) {
-            return entries.findAny().isPresent();
-        }
-    }
 }

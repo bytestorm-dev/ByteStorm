@@ -140,23 +140,67 @@ class TemplatePreparerTest {
     }
 
     @Test
-    void staticServiceGetsTemplatesOnlyOnFirstCreation() throws Exception {
-        write("ALL/a.txt", "template");
+    void staticServiceGetsTemplatesOnFirstPreparationOnly() throws Exception {
+        write("ALL/a.txt", "v1");
+        write("ALL/velocity.toml", "player-info-forwarding-mode = \"modern\"");
         TemplatePreparer preparer = new TemplatePreparer(temp.resolve("templates"));
         ServiceDefinition definition = definition("Static-1", ServiceType.SERVER, false,
                 ServiceMode.STATIC);
-        Files.createDirectories(definition.directory());
-        Files.writeString(definition.directory().resolve("marker.txt"), "keep");
+        // Die LuckPerms-Jar liegt im Ordner, bevor die Templates greifen: Das darf den
+        // ersten Start nicht als "schon vorbereitet" gelten lassen.
+        Files.createDirectories(definition.directory().resolve("plugins"));
+        Files.writeString(definition.directory().resolve("plugins/luckperms.jar"), "jar");
 
         preparer.prepare(definition, 30001);
 
-        assertFalse(Files.exists(definition.directory().resolve("a.txt")));
-        assertEquals("keep", read(definition.directory().resolve("marker.txt")));
+        assertEquals("v1", read(definition.directory().resolve("a.txt")));
+        assertTrue(read(definition.directory().resolve("velocity.toml"))
+                .contains("modern"));
+        assertEquals("jar", read(definition.directory().resolve("plugins/luckperms.jar")),
+                "fremde Dateien bleiben unangetastet");
 
-        ServiceDefinition fresh = definition("Static-2", ServiceType.SERVER, false,
+        write("ALL/a.txt", "v2");
+        preparer.prepare(definition, 30002);
+        assertEquals("v1", read(definition.directory().resolve("a.txt")),
+                "ein vorbereiteter statischer Ordner wird beim nächsten Start nicht erneut überschrieben");
+    }
+
+    @Test
+    void reapplyReplacesTemplateFilesOfAPreparedStaticService() throws Exception {
+        write("ALL/velocity.toml", "bind = \"0.0.0.0:%PORT%\"\n"
+                + "player-info-forwarding-mode = \"modern\"");
+        TemplatePreparer preparer = new TemplatePreparer(temp.resolve("templates"));
+        ServiceDefinition definition = definition("Proxy-1", ServiceType.PROXY, false,
                 ServiceMode.STATIC);
-        preparer.prepare(fresh, 30002);
-        assertEquals("template", read(fresh.directory().resolve("a.txt")));
+        preparer.prepare(definition, 25565);
+        Files.writeString(definition.directory().resolve("velocity.toml"),
+                "bind = \"0.0.0.0:25565\"\nplayer-info-forwarding-mode = \"NONE\"");
+        Files.writeString(definition.directory().resolve("operator.txt"), "bleibt");
+
+        preparer.reapply(definition, 25565);
+
+        String velocity = read(definition.directory().resolve("velocity.toml"));
+        assertTrue(velocity.contains("player-info-forwarding-mode = \"modern\""), velocity);
+        assertTrue(velocity.contains("bind = \"0.0.0.0:25565\""),
+                "der zuletzt vergebene Port ersetzt den Platzhalter: " + velocity);
+        assertEquals("bleibt", read(definition.directory().resolve("operator.txt")),
+                "Nicht-Template-Dateien bleiben erhalten");
+    }
+
+    @Test
+    void staticServiceRepairsAFolderLeftByVelocitysOwnDefaults() throws Exception {
+        write("ALL/velocity.toml", "player-info-forwarding-mode = \"modern\"");
+        TemplatePreparer preparer = new TemplatePreparer(temp.resolve("templates"));
+        ServiceDefinition definition = definition("Proxy-1", ServiceType.PROXY, false,
+                ServiceMode.STATIC);
+        Files.createDirectories(definition.directory());
+        Files.writeString(definition.directory().resolve("velocity.toml"),
+                "player-info-forwarding-mode = \"NONE\"");
+
+        preparer.prepare(definition, 25565);
+
+        assertEquals("player-info-forwarding-mode = \"modern\"",
+                read(definition.directory().resolve("velocity.toml")));
     }
 
     @Test
