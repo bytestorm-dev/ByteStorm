@@ -23,6 +23,10 @@ import java.util.function.Supplier;
 final class DashboardScreen {
 
     private static final String CLEAR = "\u001B[2J\u001B[3J\u001B[H";
+    private static final String HOME = "\u001B[H";
+    private static final String ERASE_LINE = "\u001B[K";
+    private static final String ERASE_DOWN = "\u001B[J";
+    private static final String NEWLINE = "\r\n";
     private static final int INTERRUPT = 0x03;
     private static final int ESCAPE = 0x1B;
     private static final int POLL_MILLIS = 50;
@@ -97,12 +101,29 @@ final class DashboardScreen {
         }
         synchronized (output) {
             PrintWriter writer = terminal.writer();
-            writer.print(CLEAR);
-            writer.print(text);
-            writer.print(System.lineSeparator());
-            writer.println(Theme.dim(footer()));
+            // Überschreiben statt löschen: Der Bildschirm bleibt zwischen zwei
+            // Aufbauten gefüllt und flackert nicht bei jeder Aktualisierung.
+            writer.print(HOME);
+            writeLines(writer, text);
+            writer.print(NEWLINE);
+            writeLines(writer, Theme.dim(footer()));
+            writer.print(ERASE_DOWN);
             writer.flush();
             terminal.flush();
+        }
+    }
+
+    /**
+     * Schreibt Zeilen mit Wagenrücklauf und leert den Rest der jeweiligen Zeile.
+     *
+     * @param writer Ziel
+     * @param text   mehrzeiliger Text
+     */
+    private static void writeLines(PrintWriter writer, String text) {
+        for (String line : text.split("\\R", -1)) {
+            writer.print(line);
+            writer.print(ERASE_LINE);
+            writer.print(NEWLINE);
         }
     }
 

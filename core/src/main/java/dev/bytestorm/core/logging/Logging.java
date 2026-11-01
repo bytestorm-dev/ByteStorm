@@ -44,8 +44,21 @@ public final class Logging {
     /** Name der aktiven Logdatei. */
     public static final String LOG_FILE = "cloud.log";
 
-    private static final String PATTERN =
+    /** Datei: vollständig, mit Datum und Thread — dort wird gesucht, nicht gelesen. */
+    private static final String FILE_PATTERN =
             "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
+
+    /**
+     * Konsole: nur Level, Logger und Text. Wer vor dem Terminal sitzt, braucht
+     * weder Datum noch Uhrzeit noch Thread-Namen je Zeile — all das steht in der
+     * Datei, die man bei Bedarf öffnet.
+     */
+    private static final String CONSOLE_PATTERN =
+            "%-5level %logger{20} - %msg%n";
+
+    /** Wie {@link #CONSOLE_PATTERN}, aber mit farbigem Level. */
+    private static final String CONSOLE_PATTERN_COLORED =
+            "%highlight(%-5level) %logger{20} - %msg%n";
 
     private static final String CONFIGURED_KEY = "bytestorm.logging.file";
 
@@ -130,14 +143,15 @@ public final class Logging {
             ConsoleAppender<ILoggingEvent> console = new ConsoleAppender<>();
             console.setContext(context);
             console.setName("bytestorm-console");
-            console.setEncoder(encoder(context));
+            console.setEncoder(encoder(context,
+                    ansiConsole() ? CONSOLE_PATTERN_COLORED : CONSOLE_PATTERN));
             console.start();
 
             RollingFileAppender<ILoggingEvent> rolling = new RollingFileAppender<>();
             rolling.setContext(context);
             rolling.setName("bytestorm-file");
             rolling.setFile(logFile.toString());
-            rolling.setEncoder(encoder(context));
+            rolling.setEncoder(encoder(context, FILE_PATTERN));
 
             SizeAndTimeBasedRollingPolicy<ILoggingEvent> policy = new SizeAndTimeBasedRollingPolicy<>();
             policy.setContext(context);
@@ -172,10 +186,38 @@ public final class Logging {
         };
     }
 
-    private static PatternLayoutEncoder encoder(LoggerContext context) {
+    /**
+     * Entscheidet, ob die Konsole ANSI-Farben bekommt. Die Regeln sind bewusst
+     * dieselben wie in der CLI: {@code -Dbytestorm.color=never} und
+     * {@code NO_COLOR} verbieten Farben, {@code always} erzwingt sie, ein
+     * Dumb-Terminal bleibt grau. Ist {@code TERM} gar nicht gesetzt (Dienst,
+     * Pipe), bleibt die Ausgabe reiner Text.
+     *
+     * @return {@code true}, wenn das Level eingefärbt werden darf
+     */
+    static boolean ansiConsole() {
+        String color = System.getProperty("bytestorm.color");
+        if (color != null && color.equalsIgnoreCase("never")) {
+            return false;
+        }
+        if (color != null && color.equalsIgnoreCase("always")) {
+            return true;
+        }
+        String noColor = System.getenv("NO_COLOR");
+        if (noColor != null && !noColor.isBlank()) {
+            return false;
+        }
+        String term = System.getenv("TERM");
+        if (term == null || term.isBlank() || term.equalsIgnoreCase("dumb")) {
+            return false;
+        }
+        return true;
+    }
+
+    private static PatternLayoutEncoder encoder(LoggerContext context, String pattern) {
         PatternLayoutEncoder encoder = new PatternLayoutEncoder();
         encoder.setContext(context);
-        encoder.setPattern(PATTERN);
+        encoder.setPattern(pattern);
         encoder.start();
         return encoder;
     }

@@ -11,6 +11,7 @@ import org.jline.reader.ParsedLine;
 import org.jline.reader.UserInterruptException;
 import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
+import org.jline.utils.AttributedString;
 import org.jline.terminal.TerminalBuilder;
 
 import java.io.IOException;
@@ -291,6 +292,29 @@ public final class ServiceConsole implements AutoCloseable {
             // Die Konsole darf an einer fehlgeschlagenen Vervollständigung nicht sterben.
         }
         return List.copyOf(values);
+    }
+
+    /**
+     * Schreibt eine Logzeile über der Eingabezeile, ohne den Prompt zu zerstören.
+     *
+     * <p>Hintergrund-Threads (Services, Module) loggen weiter auf die Konsole,
+     * während jemand tippt. Ein direktes {@code println} würde die Zeile mitten
+     * in den Prompt schreiben; JLine kennt für diesen Fall den Ausweg nach oben.
+     *
+     * @param line fertig formatierte Zeile, darf Farbcodes enthalten
+     */
+    public void printAbove(String line) {
+        try {
+            reader.printAbove(AttributedString.fromAnsi(line));
+            return;
+        } catch (RuntimeException e) {
+            // Kein aktiver Reader (z. B. gerade kein readLine): normal ausgeben.
+        }
+        synchronized (terminal) {
+            terminal.writer().println(line);
+            terminal.writer().flush();
+            terminal.flush();
+        }
     }
 
     /**

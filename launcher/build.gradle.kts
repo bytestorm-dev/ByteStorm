@@ -77,6 +77,10 @@ dependencies {
     // Erststart-Wizard liest interaktiv vom Terminal (§5.1, §17).
     implementation(libs.jline)
 
+    // ConsoleLogBridge hängt einen eigenen Appender an den Logger, damit
+    // Konsolen-Logs nicht in die Eingabezeile schreiben.
+    implementation(libs.logback.classic)
+
     // Single-Node: Controller, Node und CLI laufen im selben Prozess (§2).
     // Logback kommt transitiv über core.
     implementation(project(":controller"))

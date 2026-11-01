@@ -40,7 +40,14 @@ final class QuestionnaireRenderer {
         List<QuestionnaireState.Row> rows = state.rows();
         List<List<String>> blocks = new ArrayList<>(rows.size());
         for (int index = 0; index < rows.size(); index++) {
-            blocks.add(rowLines(form, state, rows.get(index), index == state.focusIndex(), content));
+            List<String> lines = new ArrayList<>(
+                    rowLines(form, state, rows.get(index), index == state.focusIndex(), content));
+            // Eine Leerzeile trennt Fragen voneinander. Ohne sie klebt der nächste
+            // Titel am letzten Options- oder Feldwert und das Formular wirkt gedrängt.
+            if (index + 1 < rows.size() && startsSomethingNew(rows.get(index + 1))) {
+                lines.add("");
+            }
+            blocks.add(lines);
         }
 
         List<String> bottomNotice = bottomNotice(state, content);
@@ -207,6 +214,15 @@ final class QuestionnaireRenderer {
             return List.of(Theme.highlight(pad(plain, content)));
         }
         return List.of(pad("   " + (empty ? Theme.dim(shown) : Theme.accent(shown)), content));
+    }
+
+    /**
+     * @param row folgende Formularzeile
+     * @return {@code true}, wenn dort eine neue Frage oder die Schaltfläche beginnt
+     */
+    private static boolean startsSomethingNew(QuestionnaireState.Row row) {
+        return row.kind() == QuestionnaireState.Kind.QUESTION
+                || row.kind() == QuestionnaireState.Kind.SUBMIT;
     }
 
     /**

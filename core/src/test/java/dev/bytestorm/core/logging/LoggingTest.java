@@ -2,6 +2,11 @@ package dev.bytestorm.core.logging;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.PatternLayout;
+import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.LoggingEvent;
+import ch.qos.logback.core.Appender;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
@@ -95,6 +100,42 @@ class LoggingTest {
         Path file = Logging.configure(temp, Level.INFO);
 
         assertEquals(temp.resolve(Logging.LOG_DIRECTORY).resolve(Logging.LOG_FILE), file);
+    }
+
+    @Test
+    void consoleDropsTheTimestampAndColorsTheLevel() {
+        LoggerContext context = new LoggerContext();
+        Logging.configure(context, temp, Level.INFO);
+
+        String pattern = consolePattern(context);
+
+        assertFalse(pattern.contains("%d{"), "die Konsole zeigt keine Uhrzeit mehr: " + pattern);
+        assertTrue(pattern.contains("%-5level"), pattern);
+
+        // Ohne diese Prüfung fiele ein unbekanntes %highlight erst im Betrieb auf:
+        // Logback schreibt das Wort dann als Text in jede Zeile.
+        PatternLayout layout = new PatternLayout();
+        layout.setContext(context);
+        layout.setPattern("%highlight(%-5level)");
+        layout.start();
+        LoggingEvent event = new LoggingEvent("dev.bytestorm.test", context.getLogger("test"),
+                ch.qos.logback.classic.Level.ERROR, "kaputt", null, null);
+        String rendered = layout.doLayout(event);
+        assertFalse(rendered.contains("%highlight"), rendered);
+        assertTrue(rendered.contains("ERROR"), rendered);
+    }
+
+    private static String consolePattern(LoggerContext context) {
+        var appenders = context.getLogger(Logger.ROOT_LOGGER_NAME).iteratorForAppenders();
+        while (appenders.hasNext()) {
+            Appender<ILoggingEvent> appender = appenders.next();
+            if ("bytestorm-console".equals(appender.getName())
+                    && appender instanceof ch.qos.logback.core.OutputStreamAppender<?> stream
+                    && stream.getEncoder() instanceof PatternLayoutEncoder encoder) {
+                return encoder.getPattern();
+            }
+        }
+        throw new AssertionError("Konsolen-Appender fehlt");
     }
 
     private static List<String> appenderNames(LoggerContext context) {

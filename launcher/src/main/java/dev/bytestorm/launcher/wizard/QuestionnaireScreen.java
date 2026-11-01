@@ -23,7 +23,12 @@ import java.util.Objects;
  */
 final class QuestionnaireScreen {
 
-    private static final String CLEAR = "\u001B[2J\u001B[3J\u001B[H";
+    /** Cursor nach oben links; der Bildschirm wird nicht geleert (kein Flackern). */
+    private static final String CURSOR_HOME = "\u001B[H";
+    private static final String ERASE_LINE = "\u001B[K";
+    private static final String ERASE_DOWN = "\u001B[J";
+    /** Im Raw-Modus übersetzt das Terminal kein {@code \n}; der Wagenrücklauf gehört dazu. */
+    private static final String NEWLINE = "\r\n";
     private static final int DEFAULT_WIDTH = 80;
     private static final int DEFAULT_HEIGHT = 24;
     private static final int EOF = -1;
@@ -227,11 +232,16 @@ final class QuestionnaireScreen {
         List<String> lines = QuestionnaireRenderer.render(state.form(), state, width, height);
         synchronized (this) {
             PrintWriter writer = terminal.writer();
-            writer.print(CLEAR);
+            // Neu zeichnen statt löschen: Jede Zeile wird überschrieben und bis zum
+            // Zeilenende geleert. Ein volles Löschen erzeugt bei jedem Tastendruck
+            // einen sichtbaren schwarzen Zwischenzustand — das Flackern.
+            writer.print(CURSOR_HOME);
             for (String line : lines) {
                 writer.print(line);
-                writer.print(System.lineSeparator());
+                writer.print(ERASE_LINE);
+                writer.print(NEWLINE);
             }
+            writer.print(ERASE_DOWN);
             writer.flush();
             terminal.flush();
         }

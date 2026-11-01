@@ -604,7 +604,8 @@ public final class Bootstrap implements AutoCloseable {
 
         try (ServiceConsole console = new ServiceConsole(bootstrap.commandLine(),
                 bootstrap.serviceController(),
-                bootstrap.layout().logs().resolve(ServiceConsole.HISTORY_FILE_NAME))) {
+                bootstrap.layout().logs().resolve(ServiceConsole.HISTORY_FILE_NAME));
+             ConsoleLogBridge logs = ConsoleLogBridge.attach(console::printAbove)) {
             console.run();
         } catch (IOException e) {
             log.warn("CLI-Konsole nicht verfügbar: {} — Strg+C beendet die Cloud", e.getMessage());
