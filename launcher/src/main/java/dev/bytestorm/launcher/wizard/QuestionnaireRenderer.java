@@ -74,7 +74,7 @@ final class QuestionnaireRenderer {
         }
 
         List<String> lines = new ArrayList<>(body.size() + chrome);
-        lines.add(topBorder(form.title(), totalWidth, wide));
+        lines.add(topBorder(form.title() + "   " + position(state), totalWidth, wide));
         for (String line : subtitle) {
             lines.add(frame(Theme.dim(" " + line), totalWidth, wide, content));
         }
@@ -115,7 +115,8 @@ final class QuestionnaireRenderer {
         String marker = expanded ? glyph("▼", "v") : glyph("▶", ">");
         int number = Math.max(1, state.questionNumber(question.id()));
         String prefix = number + ". ";
-        List<String> titleLines = wrap(prefix + question.title(), Math.max(4, content - 3));
+        String title = question.title() + (question.required() ? " " + Theme.red("*") : "");
+        List<String> titleLines = wrap(prefix + title, Math.max(4, content - 3));
 
         List<String> lines = new ArrayList<>();
         String firstTitle = titleLines.get(0);
@@ -131,15 +132,17 @@ final class QuestionnaireRenderer {
         if (!expanded) {
             String summary = question.summary(state.answers());
             String arrow = glyph("↳", "->");
+            String done = answered(question, state) ? Theme.green(glyph("✔", "+")) : Theme.dim(glyph("○", "o"));
             if (focused) {
-                List<String> plain = wrap("   " + arrow + " \"" + summary + "\"", content);
+                List<String> plain = wrap("   " + done + " " + arrow + " \"" + summary + "\"", content);
                 for (String line : plain) {
                     lines.add(Theme.highlight(pad(line, content)));
-                }            return lines;
-        }
-        List<String> summaryLines = wrap(summary, Math.max(4, content - 8));
+                }
+                return lines;
+            }
+            List<String> summaryLines = wrap(summary, Math.max(4, content - 10));
             for (int index = 0; index < summaryLines.size(); index++) {
-                String summaryPrefix = index == 0 ? "   " + arrow + " \"" : "     ";
+                String summaryPrefix = index == 0 ? "   " + done + " " + arrow + " \"" : "       ";
                 String suffix = index == summaryLines.size() - 1 ? "\"" : "";
                 lines.add(pad(summaryPrefix + Theme.accent(summaryLines.get(index)) + suffix, content));
             }
@@ -285,6 +288,37 @@ final class QuestionnaireRenderer {
             lines.add(" " + glyph("✖ ", "x ") + line);
         }
         return lines;
+    }
+
+    /**
+     * @param question Frage
+     * @param state    Zustand
+     * @return {@code true}, wenn die Frage schon beantwortet wurde
+     */
+    private static boolean answered(Question question, QuestionnaireState state) {
+        return switch (question.type()) {
+            case MULTI_SELECT -> !state.answers().all(question.id()).isEmpty();
+            default -> !state.answers().text(question.id()).isBlank();
+        };
+    }
+
+    /**
+     * @param state Zustand
+     * @return Position im Formular, z. B. {@code 3 / 14}
+     */
+    private static String position(QuestionnaireState state) {
+        long visible = state.form().questions().stream()
+                .filter(question -> question.visible(state.answers()))
+                .count();
+        if (visible <= 0 || state.rows().isEmpty()) {
+            return "";
+        }
+        QuestionnaireState.Row row = state.rows().get(Math.min(state.focusIndex(), state.rows().size() - 1));
+        int number = row.questionId() == null ? 0 : state.questionNumber(row.questionId());
+        if (number <= 0) {
+            number = (int) visible;
+        }
+        return number + " / " + visible;
     }
 
     private static String submitLabel() {

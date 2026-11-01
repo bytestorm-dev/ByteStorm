@@ -58,14 +58,15 @@ public final class JLineWizardIo implements WizardIo, AutoCloseable {
 
     @Override
     public String ask(String prompt, String defaultValue) {
-        String answer = read(prompt + (defaultValue == null ? "" : " [" + defaultValue + "]") + ": ").trim();
+        String hint = defaultValue == null ? "" : Theme.dim(" [" + defaultValue + "]");
+        String answer = read(Theme.accent("? ") + Theme.bold(prompt) + hint + Theme.dim(": ")).trim();
         return answer.isEmpty() ? defaultValue : answer;
     }
 
     @Override
     public String askSecret(String prompt) {
         // Nicht trimmen: Leerzeichen dürfen Teil eines Passworts sein.
-        return readSecret(prompt + ": ");
+        return readSecret(Theme.accent("? ") + Theme.bold(prompt) + Theme.dim(": "));
     }
 
     @Override
@@ -99,7 +100,14 @@ public final class JLineWizardIo implements WizardIo, AutoCloseable {
 
     @Override
     public void message(String text) {
-        terminal.writer().println(text);
+        String line = text == null ? "" : text;
+        if (line.startsWith("Hinweis") || line.startsWith("Bitte")) {
+            line = Theme.warn(line);
+        } else if (line.startsWith("Konfiguration") || line.startsWith("Standardgruppen")
+                || line.startsWith("Modul-Konfiguration")) {
+            line = Theme.ok(line);
+        }
+        terminal.writer().println(line);
         terminal.flush();
     }
 

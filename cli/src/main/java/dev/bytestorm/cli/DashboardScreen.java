@@ -107,8 +107,7 @@ final class DashboardScreen {
     }
 
     private String footer() {
-        return "Aktualisierung alle " + (intervalMillis / 1_000) + " s"
-                + " · q oder Strg+C beendet die Ansicht";
+        return "q oder Strg+C beendet  ·  Aktualisierung alle " + (intervalMillis / 1_000) + " s";
     }
 
     private void printLine(String line) {

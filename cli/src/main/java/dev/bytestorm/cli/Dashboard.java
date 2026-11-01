@@ -102,15 +102,15 @@ public final class Dashboard {
      */
     public static String render(Snapshot snapshot) {
         StringBuilder out = new StringBuilder();
-        out.append(Theme.bold("ByteStorm")).append("  ")
-                .append(Theme.dim("Uptime " + snapshot.uptime()));
+        out.append(Theme.bold("ByteStorm")).append(Theme.dim("  ·  Cloud Console"))
+                .append("    ").append(Theme.dim("Uptime ")).append(Theme.accent(snapshot.uptime()));
         out.append(NL).append(summary(snapshot));
         if (!snapshot.degradedGroups().isEmpty()) {
             out.append(NL).append(Theme.warn("Degradierte Gruppen: "
                     + String.join(", ", snapshot.degradedGroups())));
         }
 
-        out.append(NL).append(NL).append(Theme.section("Services"));
+        out.append(NL).append(NL).append(Theme.heading("Services"));
         if (snapshot.services().isEmpty()) {
             out.append(NL).append(Theme.dim("Keine Services registriert."));
         } else {
@@ -124,7 +124,7 @@ public final class Dashboard {
             out.append(NL).append(table.render());
         }
 
-        out.append(NL).append(NL).append(Theme.section("Gruppen"));
+        out.append(NL).append(NL).append(Theme.heading("Gruppen"));
         if (snapshot.groupRows().isEmpty()) {
             out.append(NL).append(Theme.dim("Keine Gruppen definiert."));
         } else {
@@ -139,7 +139,7 @@ public final class Dashboard {
         }
 
         if (!snapshot.crashes().isEmpty()) {
-            out.append(NL).append(NL).append(Theme.section("Letzte Crashs"));
+            out.append(NL).append(NL).append(Theme.heading("Letzte Crashs"));
             Table table = Table.of("Service", "Ursache", "Exit", "Zeit", "Bericht");
             for (CrashRow row : snapshot.crashes()) {
                 table.row(row.service(), Theme.warn(row.reason()), String.valueOf(row.exitCode()),
@@ -156,12 +156,15 @@ public final class Dashboard {
                 Theme.counts(snapshot.onlineServices(), snapshot.totalServices()) + " online"));
         out.append(SEPARATOR).append(Theme.dim("Gruppen ")).append(snapshot.groups());
         out.append(SEPARATOR).append(Theme.dim("Speicher ")).append(snapshot.usedMemoryMb())
-                .append("/").append(snapshot.maxMemoryMb()).append(" MB");
+                .append("/").append(snapshot.maxMemoryMb()).append(" MB")
+                .append(" ").append(Theme.bar(snapshot.usedMemoryMb(), snapshot.maxMemoryMb(), 12));
         if (snapshot.cpuLoad() != null) {
-            out.append(SEPARATOR).append(Theme.dim("Host-CPU ")).append(percent(snapshot.cpuLoad()));
+            out.append(SEPARATOR).append(Theme.dim("Host-CPU ")).append(percent(snapshot.cpuLoad()))
+                    .append(" ").append(Theme.bar(snapshot.cpuLoad(), 8));
         }
         if (snapshot.memoryLoad() != null) {
-            out.append(SEPARATOR).append(Theme.dim("Host-RAM ")).append(percent(snapshot.memoryLoad()));
+            out.append(SEPARATOR).append(Theme.dim("Host-RAM ")).append(percent(snapshot.memoryLoad()))
+                    .append(" ").append(Theme.bar(snapshot.memoryLoad(), 8));
         }
         return out.toString();
     }
@@ -180,7 +183,14 @@ public final class Dashboard {
      * @return {@code verbleibend/gesamt} oder {@code -} ohne Budgetangabe
      */
     private static String crashBudget(int remaining, int total) {
-        return total <= 0 ? "-" : remaining + "/" + total;
+        if (total <= 0) {
+            return Theme.dim("-");
+        }
+        String text = remaining + "/" + total;
+        if (remaining <= 0) {
+            return Theme.red(text);
+        }
+        return remaining < total ? Theme.yellow(text) : Theme.green(text);
     }
 
     /**

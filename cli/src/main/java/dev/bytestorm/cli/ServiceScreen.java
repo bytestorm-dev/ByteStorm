@@ -61,6 +61,7 @@ final class ServiceScreen {
         }
         ServiceId id = ServiceId.parse(found.get().getId());
         serviceName = found.get().getName();
+        ServiceState state = found.get().getState();
 
         Attributes previous;
         try {
@@ -73,8 +74,9 @@ final class ServiceScreen {
         AtomicBoolean running = new AtomicBoolean(true);
         Thread follower = null;
         try {
-            printLine(Theme.section("Screen " + serviceName)
-                    + Theme.dim("  —  Strg+] oder Strg+C beendet"));
+            printLine(Theme.accent(Theme.unicode() ? "▎" : "|") + " " + Theme.bold("Screen " + serviceName)
+                    + Theme.dim("  ·  ") + Theme.serviceState(state)
+                    + Theme.dim("  ·  Strg+] oder Strg+C beendet"));
             follower = Thread.ofVirtual()
                     .name("bytestorm-screen-" + serviceName)
                     .start(() -> follow(id, running));
@@ -255,7 +257,7 @@ final class ServiceScreen {
     }
 
     private void renderPromptLocked() {
-        terminal.writer().print(Theme.cyan("screen " + serviceName) + "> " + input);
+        terminal.writer().print(Theme.cyan("screen " + serviceName) + Theme.dim(" › ") + input);
     }
 
     private void printLine(String line) {

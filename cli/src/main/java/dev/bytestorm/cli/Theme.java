@@ -435,6 +435,78 @@ public final class Theme {
     }
 
     /**
+     * Zeichnet einen Fortschrittsbalken für Lasten und Auslastungen. Ohne Farben
+     * (oder vor einem Dumb-Terminal) bleiben {@code #} und {@code -}, damit der
+     * Balken auch in einem Logfile ablesbar ist.
+     *
+     * @param ratio Anteil zwischen 0 und 1, Werte außerhalb werden begrenzt
+     * @param width Breite in Zeichen, mindestens 4
+     * @return der Balken als Text
+     */
+    public static String bar(double ratio, int width) {
+        int size = Math.max(4, width);
+        double clamped = Math.max(0, Math.min(1, ratio));
+        int filled = (int) Math.round(clamped * size);
+        String full = unicode() ? "█" : "#";
+        String rest = unicode() ? "░" : "-";
+        if (!enabled) {
+            return full.repeat(filled) + rest.repeat(size - filled);
+        }
+        String color = clamped < 0.7 ? GREEN : clamped < 0.9 ? YELLOW : RED;
+        return color + full.repeat(filled) + RESET + GRAY + rest.repeat(size - filled) + RESET;
+    }
+
+    /**
+     * @param used  belegter Wert
+     * @param max   Obergrenze, {@code 0} ergibt einen leeren Balken
+     * @param width Breite in Zeichen
+     * @return der Balken als Text
+     */
+    public static String bar(long used, long max, int width) {
+        return bar(max <= 0 ? 0 : (double) used / max, width);
+    }
+
+    /**
+     * @param width Länge der Linie
+     * @return gedämpfte Trennlinie in Rahmen- oder ASCII-Zeichen
+     */
+    public static String rule(int width) {
+        return dim((unicode() ? "─" : "-").repeat(Math.max(0, width)));
+    }
+
+    /**
+     * Abschnittsüberschrift mit Akzentkante und auslaufender Linie: setzt einen
+     * ruhigen Schnitt zwischen die Blöcke, ohne die Aufmerksamkeit zu binden.
+     *
+     * @param title Überschrift
+     * @return die Überschrift, ohne Farben unverändert
+     */
+    public static String heading(String title) {
+        if (!enabled) {
+            return title;
+        }
+        int fill = Math.max(2, 46 - title.length());
+        return accent(unicode() ? "▎" : "|") + " " + bold(title) + " " + rule(fill);
+    }
+
+    /**
+     * @param text kurzer Wert, z. B. {@code CLOUD}
+     * @return kleine Plakette; ungefärbt in eckigen Klammern
+     */
+    public static String pill(String text) {
+        return enabled ? highlight(" " + text + " ") : "[" + text + "]";
+    }
+
+    /**
+     * @param current aktuelle Position, ab 1
+     * @param total   Gesamtzahl
+     * @return gedämpfte Zählung wie {@code 3/14}
+     */
+    public static String counter(int current, int total) {
+        return dim(current + "/" + total);
+    }
+
+    /**
      * Entfernt ANSI-Sequenzen. {@link Table} misst damit die sichtbare Breite.
      *
      * @param text Text, ggf. mit Farbcodes

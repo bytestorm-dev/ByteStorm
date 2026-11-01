@@ -36,7 +36,8 @@ public final class ServiceConsole implements AutoCloseable {
     public static final String HISTORY_FILE_NAME = ".cli-history";
 
     /** Prompt der Konsole, fett cyan mit gedämpftem Zeichen. */
-    public static final String PROMPT = "\u001B[1;36mbytestorm\u001B[0m \u001B[2m›\u001B[0m ";
+    public static final String PROMPT =
+            "\u001B[1;36mbytestorm\u001B[0m \u001B[2m·\u001B[0m \u001B[92m›\u001B[0m ";
 
     /** Prompt ohne Farben, etwa bei {@code --no-color} oder an einer Pipe. */
     private static final String PROMPT_PLAIN = "bytestorm> ";
@@ -186,21 +187,48 @@ public final class ServiceConsole implements AutoCloseable {
             }
             if (!output.isEmpty()) {
                 terminal.writer().println(output);
+                // Eine ruhige Leerzeile trennt Antwort und nächsten Prompt.
+                terminal.writer().println();
             }
             terminal.flush();
         }
     }
 
     /**
-     * @return Begrüßung mit den wichtigsten Einstiegen
+     * @return Begrüßung als Rahmen mit den wichtigsten Einstiegen
      */
     private String welcome() {
         String nl = System.lineSeparator();
-        return Theme.bold("ByteStorm") + Theme.dim(" — Cloud-Konsole") + nl
-                + Theme.dim("  bytestorm status   Services, Gruppen und Last auf einen Blick") + nl
-                + Theme.dim("  bytestorm watch    dieselbe Übersicht, fortlaufend") + nl
-                + Theme.dim("  bytestorm help     alle Kommandos") + nl
-                + Theme.dim("  exit beendet die Cloud.");
+        int width = 66;
+        int inner = width - 2;
+        boolean fancy = Theme.unicode();
+        String horizontal = fancy ? "─" : "-";
+        String edge = Theme.accent(fancy ? "│" : "|");
+        String top = Theme.accent((fancy ? "╭" : "+") + horizontal.repeat(inner) + (fancy ? "╮" : "+"));
+        String bottom = Theme.accent((fancy ? "╰" : "+") + horizontal.repeat(inner) + (fancy ? "╯" : "+"));
+
+        StringBuilder out = new StringBuilder();
+        out.append(top).append(nl);
+        out.append(edge).append(fill(Theme.bold("  ByteStorm") + Theme.dim("  ·  Cloud Console"), inner))
+                .append(edge).append(nl);
+        out.append(edge).append(fill(Theme.dim("  Services, Gruppen und Logs im Blick."), inner))
+                .append(edge).append(nl);
+        out.append(edge).append(fill("  " + Theme.accent("status") + Theme.dim(" Übersicht   ")
+                + Theme.accent("watch") + Theme.dim(" live   ")
+                + Theme.accent("help") + Theme.dim(" Kommandos   ")
+                + Theme.accent("exit") + Theme.dim(" beenden"), inner)).append(edge).append(nl);
+        out.append(bottom).append(nl);
+        return out.toString();
+    }
+
+    /**
+     * @param styled bereits gefärbter Text
+     * @param width  sichtbare Zielbreite
+     * @return der Text, rechts auf die Breite aufgefüllt
+     */
+    private static String fill(String styled, int width) {
+        int visible = Theme.stripAnsi(styled).length();
+        return visible >= width ? styled : styled + " ".repeat(width - visible);
     }
 
     /**
