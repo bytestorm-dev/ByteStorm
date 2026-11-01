@@ -1,0 +1,96 @@
+# Alerting-Regeln für ByteStorm.
+#
+# Sie decken die Fälle ab, die logs/alerts.log nicht sehen kann: Stirbt die
+# Cloud, schreibt niemand mehr in die Datei; Summen und Vorstufen (knappes
+# Crash-Budget, hängender Start, vergessene Wartung) stehen dort ebenfalls nicht.
+# Einzelne Zustände (Mongo/Redis weg, DEGRADED, Crash) meldet die Cloud selbst —
+# diese Regeln sind die zweite Meinung für den Fall, dass niemand die Datei liest.
+#
+# Einbinden in prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/bytestorm.rules.yml
+#
+# Der Scrape braucht einen API-Key mit dem Scope monitoring.read; Beispiel in
+# docs/deployment.md §7.
+groups:
+  - name: bytestorm
+    rules:
+      - alert: ByteStormMetricsMissing
+        expr: up{job="bytestorm"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          area: availability
+        annotations:
+          summary: "ByteStorm liefert keine Metriken ({{ $labels.instance }})"
+          description: >-
+            Der Scrape von /metrics schlägt fehl. Entweder ist die Cloud beendet,
+            das REST-Modul deaktiviert oder der Key ohne monitoring.read. Genau
+            diesen Fall kann logs/alerts.log nicht melden — dort schreibt niemand
+            mehr. `status` und `service list` prüfen, danach `doctor`.
+
+      - alert: ByteStormUnhealthy
+        expr: bytestorm_up == 0
+        for: 5m
+        labels:
+          severity: critical
+          area: health
+        annotations:
+          summary: "ByteStorm meldet einen kranken Bestandteil ({{ $labels.instance }})"
+          description: >-
+            `bytestorm_health_component_up` nennt den Bestandteil, der nicht
+            antwortet. Die Cloud meldet das einmal; diese Regel wiederholt es,
+            bis jemand reagiert. `doctor` zeigt die Details des Healthchecks.
+
+      - alert: ByteStormNoServiceOnline
+        expr: absent(bytestorm_services{state="ONLINE"}) and (bytestorm_services_total > 0)
+        for: 5m
+        labels:
+          severity: critical
+          area: availability
+        annotations:
+          summary: "Kein Service ist ONLINE, obwohl Services bekannt sind"
+          description: >-
+            Die Cloud kennt Services, aber keiner nimmt Spieler an. alerts.log
+            sieht nur einzelne Abstürze, nicht die Summe. `service list` und
+            `doctor` prüfen, Logs unter logs/<service>/ lesen.
+
+      - alert: ByteStormServiceStuckStarting
+        expr: bytestorm_services{state=~"PREPARING|STARTING"} > 0
+        for: 10m
+        labels:
+          severity: warning
+          area: lifecycle
+        annotations:
+          summary: "{{ $value }} Service(s) hängen seit 10 Minuten in PREPARING/STARTING"
+          description: >-
+            Ein Start-Timeout-Alarm fehlt in der Cloud; diese Regel ersetzt ihn
+            für den Betrieb. Logs unter logs/<service>/ zeigen, ob Java, die
+            Plattform-Jar oder die EULA klemmt; `service restart <name>` nach
+            der Ursache.
+
+      - alert: ByteStormCrashBudgetLow
+        expr: bytestorm_crash_budget_remaining <= 1
+        for: 5m
+        labels:
+          severity: warning
+          area: lifecycle
+        annotations:
+          summary: "Service {{ $labels.service }} hat nur noch {{ $value }} Neustart(s)"
+          description: >-
+            Vorstufe zu DEGRADED: Ist das Budget aufgebraucht, stoppt die
+            Skalierung die Gruppe und alerts.log meldet erst dann. Ursache in
+            crash-reports/ und logs/{{ $labels.service }}/ suchen.
+
+      - alert: ByteStormMaintenanceLeftOn
+        expr: bytestorm_groups_maintenance > 0
+        for: 12h
+        labels:
+          severity: warning
+          area: operations
+        annotations:
+          summary: "{{ $value }} Gruppe(n) stehen seit 12 Stunden im Wartungsmodus"
+          description: >-
+            Im Wartungsmodus skaliert die Cloud die Gruppe nicht und startet
+            keine Services nach. Wartung ist kein Fehlerzustand, deshalb meldet
+            alerts.log sie nie. `maintenance <name> off` beendet sie.

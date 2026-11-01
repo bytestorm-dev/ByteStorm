@@ -4,6 +4,7 @@ import dev.bytestorm.api.ByteStorm;
 import dev.bytestorm.api.health.CloudHealth;
 import dev.bytestorm.api.service.PortRange;
 import dev.bytestorm.api.service.ServiceId;
+import dev.bytestorm.cli.AlertsCommandLine;
 import dev.bytestorm.cli.BackupCommandLine;
 import dev.bytestorm.cli.EulaCommandLine;
 import dev.bytestorm.cli.GroupCommandLine;
@@ -25,6 +26,9 @@ import dev.bytestorm.controller.scaling.SystemHostMetrics;
 import dev.bytestorm.controller.template.TemplateManager;
 import dev.bytestorm.codec.ProtobufCodec;
 import dev.bytestorm.codec.TypeRegistry;
+import dev.bytestorm.core.alert.AlertFileSink;
+import dev.bytestorm.core.alert.AlertService;
+import dev.bytestorm.core.alert.LogAlertSink;
 import dev.bytestorm.core.config.CloudConfig;
 import dev.bytestorm.core.config.ConfigException;
 import dev.bytestorm.core.config.ConfigService;
@@ -46,6 +50,7 @@ import dev.bytestorm.core.update.Updater;
 import dev.bytestorm.core.redis.RedisProvider;
 import dev.bytestorm.core.redis.RedisUnavailableException;
 import dev.bytestorm.core.redis.ServiceReconciliation;
+import dev.bytestorm.launcher.alert.AlertMonitor;
 import dev.bytestorm.launcher.api.DefaultByteStormApi;
 import dev.bytestorm.launcher.backup.CloudBackup;
 import dev.bytestorm.launcher.doctor.ControllerRepair;
@@ -299,6 +304,15 @@ public final class Bootstrap implements AutoCloseable {
             // Vor der API angelegt: `/health`, `/nodes/status` und `/metrics` lesen
             // denselben Bericht, den der Start selbst prüft (§11).
             Healthcheck healthcheck = Healthcheck.of(mongo, redis).withRuntime(runtimeProbe(config));
+            // Alarme (§20): derselbe Healthcheck wie /health, dazu DEGRADED-Gruppen,
+            // abgestürzte Services und knapper Speicher. Jeder Zustand wird einmal
+            // gemeldet und einmal als behoben — Log und logs/alerts.log.
+            AlertService alertService = new AlertService(List.of(new LogAlertSink(),
+                    new AlertFileSink(layout.logs().resolve(AlertFileSink.FILE_NAME))));
+            AlertMonitor alertMonitor = new AlertMonitor(healthcheck, groups::all, services::all,
+                    services::isDegraded, directory, alertService);
+            alertMonitor.start();
+            shutdown.registerCloseable("alerts", alertMonitor);
             DefaultByteStormApi api = new DefaultByteStormApi(controller, provisioner, groups, scaling,
                     DefaultByteStormApi.PlayerAccess.of(playerManager, playerRepository), templates,
                     modules, core.events()::subscribe, () -> toCloudHealth(healthcheck));
@@ -338,7 +352,9 @@ public final class Bootstrap implements AutoCloseable {
                     new BackupCommandLine(new CloudBackup(layout,
                             CloudBackup.mongoExporter(mongo.database())), layout.backups()),
                     // Zustimmung zur Minecraft-EULA nachträglich ändern (§17).
-                    new EulaCommandLine(directory));
+                    new EulaCommandLine(directory),
+                    // `alerts` liest denselben Zustand, den die Überwachung meldet (§20).
+                    new AlertsCommandLine(alertService::active));
             log.info("Node-ServiceManager bereit (Runtime {}, Logs {}, Scaling {} s)",
                     config.runtime(), layout.logs(), config.scaling().intervalSeconds());
 

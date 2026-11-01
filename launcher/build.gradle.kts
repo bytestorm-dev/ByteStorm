@@ -115,6 +115,10 @@ tasks.register<Zip>("distributionZip") {
     archiveFileName.set("bytestorm-${project.version}.zip")
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
 
+    // Lizenz und Hinweise gehören in jede Weitergabe — auch in die Zip (§1.1).
+    from(rootProject.file("LICENSE"))
+    from(rootProject.file("NOTICE"))
+    from(rootProject.file("CHANGELOG.md"))
     from(tasks.named("jar")) {
         rename { "bytestorm.jar" }
     }
