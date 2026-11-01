@@ -22,8 +22,11 @@ record RestSettings(String host, int port, String apiKey) {
     /** Standard-Port des REST-Moduls. */
     static final int DEFAULT_PORT = 8080;
 
-    /** Standard-Adresse: die Cloud darf von außen erreichbar sein, der Key schützt. */
-    static final String DEFAULT_HOST = "0.0.0.0";
+    /**
+     * Standard-Adresse: nur lokal. Der Key schützt die API, ersetzt aber kein TLS —
+     * für den Zugriff von außen gehört ein Reverse-Proxy davor (§20).
+     */
+    static final String DEFAULT_HOST = "127.0.0.1";
 
     /** Kürzere Keys gelten als unsicher. */
     static final int MIN_KEY_LENGTH = 8;

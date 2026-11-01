@@ -101,7 +101,7 @@ class FirstRunWizardTest {
         ModuleConfig rest = moduleCalls.get(0);
         assertEquals("rest", rest.name());
         assertTrue(rest.enabled(), "das Modul wird als aktiviert hinterlegt");
-        assertEquals(Map.of("host", "0.0.0.0", "port", "8099", "apiKey", "geheim-geheim-1234"),
+        assertEquals(Map.of("host", "127.0.0.1", "port", "8099", "apiKey", "geheim-geheim-1234"),
                 Map.copyOf(rest.settings()));
         // Der Key geht nur nach MongoDB — nie in eine Ausgabe (§20).
         assertTrue(io.messages().stream().noneMatch(message -> message.contains("geheim-geheim-1234")),

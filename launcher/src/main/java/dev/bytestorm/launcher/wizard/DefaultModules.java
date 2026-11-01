@@ -37,10 +37,11 @@ public final class DefaultModules {
     public static final String REST_PORT = "port";
 
     /**
-     * Standardadresse des REST-Moduls. Muss zu {@code RestSettings.DEFAULT_HOST}
-     * im Modul passen — dort steht derselbe Default für den Betrieb ohne Wizard.
+     * Standardadresse des REST-Moduls: nur lokal. Muss zu
+     * {@code RestSettings.DEFAULT_HOST} im Modul passen — dort steht derselbe
+     * Default für den Betrieb ohne Wizard (§20).
      */
-    public static final String REST_DEFAULT_HOST = "0.0.0.0";
+    public static final String REST_DEFAULT_HOST = "127.0.0.1";
 
     /** Standardport des REST-Moduls, wie {@code RestSettings.DEFAULT_PORT}. */
     public static final int REST_DEFAULT_PORT = 8080;
