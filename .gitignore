@@ -56,5 +56,4 @@ bin/
 ### Mac OS ###
 .DS_Store
 /TODO.md
-/prod-ready-todo.md
 /backups/
