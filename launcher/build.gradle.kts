@@ -155,11 +155,17 @@ tasks.register<Zip>("distributionZip") {
             rename { "module-$module.jar" }
         }
     }
-    // Proxy-Plugins liegen unter plugins/ im Zip: Der Betreiber kopiert sie in den
-    // plugins/-Ordner seines Proxys; sie laufen nicht in der Cloud.
+    // Server-Plugins liegen unter plugins/ im Zip: Der Betreiber kopiert sie in den
+    // plugins/-Ordner seines Proxys bzw. seiner Lobby; sie laufen nicht in der Cloud.
     from(project(":plugins:proxy-plugin").tasks.named("shadowJar")) {
         into("plugins")
         rename { "bytestorm-proxy.jar" }
+    }
+    // Das Lobby-Plugin gehört auf die Lobby-Server, nicht in lib/: Es ist ein
+    // eigenständiges Paper-Plugin und wird von keinem ServiceLoader gesucht.
+    from(project(":plugins:lobby-plugin").tasks.named("shadowJar")) {
+        into("plugins")
+        rename { "bytestorm-lobby.jar" }
     }
 }
 
