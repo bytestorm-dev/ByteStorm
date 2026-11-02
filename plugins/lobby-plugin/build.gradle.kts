@@ -43,6 +43,12 @@ tasks.shadowJar {
     // InvUI liegt in vielen Plugins in einer anderen Version; relocate hält sie auseinander.
     relocate("xyz.xenondevs.invui", "dev.bytestorm.lobby.libs.invui")
     relocate("com.fasterxml.jackson", "dev.bytestorm.lobby.libs.jackson")
+    // Netty und SnakeYAML bringt Paper selbst mit. Unverschoben lädt der Server
+    // seine Klassen und das Plugin mischt seine dazu — Netty lehnt doppelt
+    // registrierte Attribute ab ("'io.netty.resolver.dns.pipeline' is already in
+    // use"), und das Plugin schaltet sich beim Start ab.
+    relocate("io.netty", "dev.bytestorm.lobby.libs.netty")
+    relocate("org.yaml", "dev.bytestorm.lobby.libs.yaml")
     mergeServiceFiles()
 }
 

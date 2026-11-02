@@ -6,6 +6,30 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+### Neu
+
+- **Fortschrittsbalken beim Update**: `updater update` lädt das Release-Zip
+  nicht mehr stumm — der Updater meldet gelesene und gesamte Bytes, die Konsole
+  zeichnet an einem Terminal einen laufenden Balken mit Prozent und Größe.
+  Umgeleitete Ausgabe bekommt nur den Endstand, damit Logs lesbar bleiben; nennt
+  der Server keine Gesamtgröße, steht dort allein die geladene Menge.
+- **`templates sync` mit Pfad**: `templates sync <service> <template> [pfad]`
+  spiegelt nur einen Teil des Service-Ordners ins Template — etwa
+  `plugins/MyPlugin` aus dem Arbeitsordner eines laufenden Services unter
+  `running/`, der beim Stop verworfen wird. Der Pfad bleibt im Template erhalten,
+  Laufzeitdaten und Bridge-Jars bleiben wie beim ganzen Ordner draußen, und Pfade
+  außerhalb des Service-Ordners werden abgewiesen.
+
+### Behoben
+
+- **Lobby-Plugin schaltete sich auf Paper ab**: Das Jar brachte Netty und
+  SnakeYAML unverschoben mit und mischte sich damit in die Klassen, die der
+  Server selbst geladen hat. Netty lehnt doppelt registrierte Attribute ab
+  (`'io.netty.resolver.dns.pipeline' is already in use`), der Start brach im
+  `ExceptionInInitializerError` von `DnsNameResolverBuilder` ab. Beide
+  Bibliotheken liegen jetzt unter `dev.bytestorm.lobby.libs.*`, wie Redisson,
+  Protobuf, Jackson und InvUI schon vorher.
+
 ## [1.2.4] - 2026-11-02
 
 ### Geändert
