@@ -17,10 +17,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -35,9 +38,17 @@ import java.util.zip.ZipInputStream;
  * <p>Eingespielt wird in drei Schritten: Zip in {@code update/} laden, in einen
  * Staging-Ordner entpacken und erst dann die Dateien an ihren Platz kopieren.
  * Vorhandene Dateien wandern vorher nach {@code update/backup/}, damit ein
- * misslungenes Update nachvollziehbar bleibt. Entpackt werden nur
- * {@code bytestorm.jar} und {@code lib/*.jar}; alles andere im Archiv wird
- * übergangen, Pfade mit {@code ..} werden abgewiesen.
+ * misslungenes Update nachvollziehbar bleibt. Entpackt werden
+ * {@code bytestorm.jar} sowie die Laufzeit-Dateien unter {@code lib/} — Jars,
+ * {@code dependencies.txt} und {@code .manifest.json}; alles andere im Archiv
+ * wird übergangen, Pfade mit {@code ..} werden abgewiesen.
+ *
+ * <p>Die Cloud-Jars tragen ihre Version im Dateinamen. Ein neues Release bringt
+ * also {@code lib/cli-1.3.0.jar} mit, die alte {@code lib/cli-1.2.0.jar} bleibt
+ * aber liegen — und der {@code LibClassLoader} lädt die Jars alphabetisch, sodass
+ * die ältere Fassung gewinnen würde. Deshalb entfernt {@link #install(Release)}
+ * versionierte Cloud-Jars, die im neuen Archiv nicht mehr vorkommen, nachdem sie
+ * gesichert wurden.
  *
  * <p>Die laufende Cloud tauscht damit ihre Jars aus, benutzt aber weiterhin die
  * geladenen Klassen — die neue Version greift erst nach einem Neustart.
@@ -60,10 +71,27 @@ public final class Updater {
     /** Unterordner der Distribution mit den Laufzeit-Jars. */
     public static final String LIB_DIRECTORY = "lib";
 
+    /** Liste der nachzuladenden Fremd-Jars; der Launcher liest sie vor dem Start. */
+    public static final String DEPENDENCIES_FILE = "dependencies.txt";
+
+    /** Manifest der bereits geladenen Fremd-Jars, vom Launcher gepflegt. */
+    public static final String LIB_MANIFEST_FILE = ".manifest.json";
+
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(300);
     private static final int RELEASES_PER_PAGE = 50;
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+
+    /** Cloud-Jars, deren Dateiname eine Version trägt. */
+    private static final List<String> CLOUD_ARTIFACTS = List.of(
+            "api", "codec", "cli", "controller", "core", "launcher", "node", "proto");
+
+    /**
+     * {@code lib/cli-1.2.0.jar} und Verwandte. Nur solche Dateien räumt ein Update
+     * weg — eigene Module unter {@code lib/} bleiben unangetastet.
+     */
+    private static final Pattern VERSIONED_CLOUD_JAR = Pattern.compile(
+            "(?:" + String.join("|", CLOUD_ARTIFACTS) + ")-\\d[0-9A-Za-z.\\-]*\\.jar");
 
     private final Path cloudDirectory;
     private final String repository;
@@ -267,10 +295,12 @@ public final class Updater {
 
     private int copyIntoPlace(Path staging) throws IOException {
         Path backup = cloudDirectory.resolve("update").resolve("backup");
+        Set<Path> staged = new HashSet<>();
         int copied = 0;
         try (Stream<Path> files = Files.walk(staging)) {
             for (Path file : files.filter(Files::isRegularFile).toList()) {
                 Path relative = staging.relativize(file);
+                staged.add(relative);
                 Path target = cloudDirectory.resolve(relative);
                 if (Files.isRegularFile(target)) {
                     Path savedTo = backup.resolve(relative);
@@ -282,8 +312,44 @@ public final class Updater {
                 copied++;
             }
         }
-        log.info("{} Dateien ersetzt (vorherige Fassung unter {})", copied, backup);
+        int removed = removeObsoleteCloudJars(staged, backup);
+        log.info("{} Dateien ersetzt, {} veraltete Jar(s) entfernt (vorherige Fassung unter {})",
+                copied, removed, backup);
         return copied;
+    }
+
+    /**
+     * Entfernt Cloud-Jars der alten Version, die im neuen Archiv nicht mehr
+     * vorkommen. Ohne diesen Schritt bliebe {@code lib/cli-1.1.0.jar} neben
+     * {@code lib/cli-1.2.0.jar} liegen, und der alphabetisch sortierende
+     * {@code LibClassLoader} würde weiter die alten Klassen laden.
+     *
+     * @param staged  Pfade, die das Update gerade geschrieben hat, relativ zum Cloud-Verzeichnis
+     * @param backup  Ziel der Sicherung
+     * @return Anzahl der entfernten Dateien
+     */
+    private int removeObsoleteCloudJars(Set<Path> staged, Path backup) throws IOException {
+        Path lib = cloudDirectory.resolve(LIB_DIRECTORY);
+        if (!Files.isDirectory(lib)) {
+            return 0;
+        }
+
+        int removed = 0;
+        try (Stream<Path> files = Files.list(lib)) {
+            for (Path file : files.filter(Files::isRegularFile).toList()) {
+                String name = file.getFileName().toString();
+                if (!VERSIONED_CLOUD_JAR.matcher(name).matches()
+                        || staged.contains(Path.of(LIB_DIRECTORY, name))) {
+                    continue;
+                }
+                Path savedTo = backup.resolve(LIB_DIRECTORY).resolve(name);
+                Files.createDirectories(savedTo.getParent());
+                Files.copy(file, savedTo, StandardCopyOption.REPLACE_EXISTING);
+                Files.delete(file);
+                removed++;
+            }
+        }
+        return removed;
     }
 
     private JsonNode getJson(String path) {
@@ -327,9 +393,16 @@ public final class Updater {
         if (normalized.equals(LAUNCHER_JAR)) {
             return true;
         }
-        return normalized.startsWith(LIB_DIRECTORY + "/")
-                && normalized.toLowerCase(Locale.ROOT).endsWith(".jar")
-                && !normalized.endsWith("/");
+        String prefix = LIB_DIRECTORY + "/";
+        if (!normalized.startsWith(prefix) || normalized.endsWith("/")) {
+            return false;
+        }
+        String file = normalized.substring(prefix.length());
+        // dependencies.txt gehört dazu: Ohne die neue Liste lädt der Launcher die
+        // Bibliotheken der alten Version nach und startet mit einem gemischten Stand.
+        return file.equals(DEPENDENCIES_FILE)
+                || file.equals(LIB_MANIFEST_FILE)
+                || file.toLowerCase(Locale.ROOT).endsWith(".jar");
     }
 
     private static Path safeResolve(Path root, String name) {

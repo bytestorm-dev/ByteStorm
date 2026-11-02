@@ -109,12 +109,34 @@ class UpdaterTest {
     void installReplacesTheDistributionAndKeepsABackup() throws IOException {
         int files = updater.install(updater.latest().orElseThrow());
 
-        assertEquals(2, files, "Eine Jar im lib/ und das Einstiegs-Jar");
+        assertEquals(3, files, "Einstiegs-Jar, Jar im lib/ und das Manifest");
         assertEquals("neu", Files.readString(cloud.resolve("bytestorm.jar")));
         assertEquals("neu", Files.readString(cloud.resolve("lib/core-1.0.jar")));
         assertEquals("alt", Files.readString(cloud.resolve("update/backup/bytestorm.jar")));
         assertEquals("alt", Files.readString(cloud.resolve("update/backup/lib/core-1.0.jar")));
         assertTrue(requests.contains("asset"));
+    }
+
+    @Test
+    void installRemovesTheJarsOfTheOldRelease() throws IOException {
+        Files.writeString(cloud.resolve("lib/cli-1.1.0.jar"), "alt");
+        Files.writeString(cloud.resolve("lib/module-custom.jar"), "eigen");
+        distribution = zip(java.util.Map.of(
+                "bytestorm.jar", "neu",
+                "lib/cli-1.2.0.jar", "neu",
+                "lib/dependencies.txt", "neu"
+        ));
+
+        updater.install(updater.latest().orElseThrow());
+
+        assertFalse(Files.exists(cloud.resolve("lib/cli-1.1.0.jar")),
+                "die alte Fassung darf nicht neben der neuen liegen bleiben");
+        assertEquals("alt", Files.readString(cloud.resolve("update/backup/lib/cli-1.1.0.jar")));
+        assertTrue(Files.exists(cloud.resolve("lib/module-custom.jar")),
+                "eigene Module unter lib/ bleiben unangetastet");
+        assertEquals("neu", Files.readString(cloud.resolve("lib/cli-1.2.0.jar")));
+        assertEquals("neu", Files.readString(cloud.resolve("lib/dependencies.txt")),
+                "die Liste der Fremd-Jars gehört zum Update");
     }
 
     @Test
