@@ -6,6 +6,26 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+## [1.2.2] - 2026-11-02
+
+### Neu
+
+- **Sprachdateien im Lobby-Plugin**: Alle Texte — Hologramm-Status, Hinweiszeile,
+  Klick-Meldungen, Auswahlmenü und `/serverdisplay` — stehen jetzt in
+  `messages/de.json` und `messages/en.json`. `language` in der `config.yml` wählt
+  die Sprache; fehlt sie, gilt Englisch als Rückfallebene. Platzhalter stehen in
+  Prozentzeichen (`%server%`, `%players%`, `%count%`), damit sie nicht mit
+  MiniMessage-Tags kollidieren, und dürfen mehrzeilig sein.
+- **Texte ohne Neubau ändern**: Beim ersten Start kopiert das Plugin beide Dateien
+  ins Datenverzeichnis. Überschreibungen dort gewinnen schlüsselweise — alles
+  nicht Geänderte kommt weiter aus dem Jar, ein Update verliert also nichts.
+
+### Behoben
+
+- **Lobby-Plugin fehlte im Release**: Das Jar existierte nur als Gradle-Modul und
+  lag in keinem Zip. Es wird jetzt als `plugins/bytestorm-lobby.jar` mitgeliefert
+  und gehört damit in den `plugins/`-Ordner einer Lobby-Gruppe.
+
 ## [1.2.1] - 2026-11-02
 
 ### Behoben
