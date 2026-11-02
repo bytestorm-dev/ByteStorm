@@ -214,9 +214,16 @@ Sicherung auf derselben Platte schützt gegen nichts.
 
 ```bash
 updater check
-updater update        # ersetzt bytestorm.jar und lib/, legt Altes unter update/backup/ ab
+updater update        # ersetzt bytestorm.jar, lib/ und plugins/*.jar,
+                      # legt Altes unter update/backup/ ab
 shutdown              # danach neu starten
 ```
+
+`plugins/` enthält die Server-Plugins aus dem Release (`bytestorm-proxy.jar`,
+`bytestorm-lobby.jar`). Sie laufen nicht in der Cloud: nach dem Update die
+gewünschte Jar einmal nach `templates/<Gruppe>/plugins/` kopieren, damit neue
+Services sie erben — ein bereits laufender Service bekommt sie erst beim
+nächsten Start.
 
 Vor jedem Update: `backup`. Für den Rückweg `update/backup/` zurückspielen und die
 Cloud neu starten; die Version steht in `gradle.properties` und im Manifest.

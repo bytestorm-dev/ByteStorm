@@ -140,6 +140,42 @@ class UpdaterTest {
     }
 
     @Test
+    void installBringsTheServerPluginsWithIt() throws IOException {
+        distribution = zip(java.util.Map.of(
+                "bytestorm.jar", "neu",
+                "lib/core-1.0.jar", "neu",
+                "plugins/bytestorm-lobby.jar", "lobby",
+                "plugins/bytestorm-proxy.jar", "proxy",
+                "plugins/notes.txt", "kein Jar"
+        ));
+
+        int files = updater.install(updater.latest().orElseThrow());
+
+        assertEquals(4, files, "Einstiegs-Jar, Jar im lib/ und beide Server-Plugins");
+        assertEquals("lobby", Files.readString(cloud.resolve("plugins/bytestorm-lobby.jar")));
+        assertEquals("proxy", Files.readString(cloud.resolve("plugins/bytestorm-proxy.jar")));
+        assertFalse(Files.exists(cloud.resolve("plugins/notes.txt")),
+                "nur Jars gehören nach plugins/");
+    }
+
+    @Test
+    void installReplacesAnOlderPluginJarAndKeepsABackup() throws IOException {
+        Files.createDirectories(cloud.resolve("plugins"));
+        Files.writeString(cloud.resolve("plugins/bytestorm-lobby.jar"), "alt");
+        distribution = zip(java.util.Map.of(
+                "bytestorm.jar", "neu",
+                "lib/core-1.0.jar", "neu",
+                "plugins/bytestorm-lobby.jar", "neu"
+        ));
+
+        updater.install(updater.latest().orElseThrow());
+
+        assertEquals("neu", Files.readString(cloud.resolve("plugins/bytestorm-lobby.jar")));
+        assertEquals("alt",
+                Files.readString(cloud.resolve("update/backup/plugins/bytestorm-lobby.jar")));
+    }
+
+    @Test
     void installRejectsAnArchiveWithoutTheLauncherJar() throws IOException {
         distribution = zip(java.util.Map.of("lib/core-1.0.jar", "neu"));
 

@@ -39,9 +39,15 @@ import java.util.zip.ZipInputStream;
  * Staging-Ordner entpacken und erst dann die Dateien an ihren Platz kopieren.
  * Vorhandene Dateien wandern vorher nach {@code update/backup/}, damit ein
  * misslungenes Update nachvollziehbar bleibt. Entpackt werden
- * {@code bytestorm.jar} sowie die Laufzeit-Dateien unter {@code lib/} — Jars,
- * {@code dependencies.txt} und {@code .manifest.json}; alles andere im Archiv
- * wird übergangen, Pfade mit {@code ..} werden abgewiesen.
+ * {@code bytestorm.jar}, die Laufzeit-Dateien unter {@code lib/} (Jars,
+ * {@code dependencies.txt} und {@code .manifest.json}) sowie die Server-Plugins
+ * unter {@code plugins/}; alles andere im Archiv wird übergangen, Pfade mit
+ * {@code ..} werden abgewiesen.
+ *
+ * <p>Die Plugins landen in {@code <cloud>/plugins/} — derselbe Ordner, den auch
+ * ein entpacktes Release anlegt. Von dort kopiert der Betreiber sie in die
+ * Templates von Proxy und Lobby; ohne diesen Schritt fehlte nach einem Update
+ * etwa {@code bytestorm-lobby.jar}, obwohl das Release sie mitbringt.
  *
  * <p>Die Cloud-Jars tragen ihre Version im Dateinamen. Ein neues Release bringt
  * also {@code lib/cli-1.3.0.jar} mit, die alte {@code lib/cli-1.2.0.jar} bleibt
@@ -70,6 +76,9 @@ public final class Updater {
 
     /** Unterordner der Distribution mit den Laufzeit-Jars. */
     public static final String LIB_DIRECTORY = "lib";
+
+    /** Unterordner der Distribution mit den Server-Plugins (Proxy, Lobby). */
+    public static final String PLUGIN_DIRECTORY = "plugins";
 
     /** Liste der nachzuladenden Fremd-Jars; der Launcher liest sie vor dem Start. */
     public static final String DEPENDENCIES_FILE = "dependencies.txt";
@@ -283,8 +292,8 @@ public final class Updater {
         }
         if (entries == 0) {
             deleteRecursively(staging);
-            throw new UpdateException("Archiv enthält weder "
-                    + LAUNCHER_JAR + " noch Jars unter " + LIB_DIRECTORY + "/");
+            throw new UpdateException("Archiv enthält weder " + LAUNCHER_JAR
+                    + " noch Jars unter " + LIB_DIRECTORY + "/ oder " + PLUGIN_DIRECTORY + "/");
         }
         if (!Files.isRegularFile(staging.resolve(LAUNCHER_JAR))) {
             deleteRecursively(staging);
@@ -393,6 +402,15 @@ public final class Updater {
         if (normalized.equals(LAUNCHER_JAR)) {
             return true;
         }
+        // Server-Plugins liegen neben der Cloud, laufen aber nicht in ihr: Der
+        // Betreiber kopiert sie in die Templates von Proxy und Lobby. Ein Update,
+        // das sie auslässt, liefert eine neue Cloud ohne neues Plugin-Jar.
+        String plugins = PLUGIN_DIRECTORY + "/";
+        if (normalized.startsWith(plugins)) {
+            return !normalized.endsWith("/")
+                    && normalized.toLowerCase(Locale.ROOT).endsWith(".jar");
+        }
+
         String prefix = LIB_DIRECTORY + "/";
         if (!normalized.startsWith(prefix) || normalized.endsWith("/")) {
             return false;

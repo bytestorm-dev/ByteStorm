@@ -6,6 +6,18 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+## [1.2.3] - 2026-11-02
+
+### Behoben
+
+- **`updater update` bringt jetzt auch die Server-Plugins mit**: Das Update
+  übernahm bisher nur `bytestorm.jar` und `lib/`; die Plugins aus dem Release-Zip
+  blieben liegen. Nach dem Update auf 1.2.2 fehlte deshalb
+  `plugins/bytestorm-lobby.jar`. `plugins/*.jar` (Proxy und Lobby) landen jetzt in
+  `<cloud>/plugins/` und werden dort wie `lib/` vorher gesichert — von dort
+  kopiert man sie einmal in die Templates von Proxy und Lobby. Andere Dateien
+  unter `plugins/` werden weiterhin übergangen.
+
 ## [1.2.2] - 2026-11-02
 
 ### Neu
