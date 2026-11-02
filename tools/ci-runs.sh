@@ -12,7 +12,7 @@
 set -euo pipefail
 
 here="$(dirname "$0")"
-repo="${CI_REPO:-mzcydev/ByteStorm}"
+repo="${CI_REPO:-bytestorm-dev/ByteStorm}"
 limit=5
 wait_sha=""
 logs_run=""

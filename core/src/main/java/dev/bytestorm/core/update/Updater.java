@@ -46,13 +46,13 @@ import java.util.zip.ZipInputStream;
 public final class Updater {
 
     /** Repository mit den Releases, wenn nichts anderes angegeben wird. */
-    public static final String DEFAULT_REPOSITORY = "mzcydev/ByteStorm";
+    public static final String DEFAULT_REPOSITORY = "bytestorm-dev/ByteStorm";
 
     /** Basis der GitHub-API. */
     public static final URI DEFAULT_API = URI.create("https://api.github.com");
 
     /** User-Agent; die GitHub-API weist Anfragen ohne ihn ab. */
-    public static final String USER_AGENT = "ByteStorm-Cloud (+https://github.com/mzcydev/ByteStorm)";
+    public static final String USER_AGENT = "ByteStorm-Cloud (+https://github.com/bytestorm-dev/ByteStorm)";
 
     /** Dateiname des Einstiegs-Jars in der Distribution. */
     public static final String LAUNCHER_JAR = "bytestorm.jar";
