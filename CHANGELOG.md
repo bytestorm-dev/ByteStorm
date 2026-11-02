@@ -6,6 +6,33 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+## [1.2.0] - 2026-11-02
+
+### Neu
+
+- **Lobby-Plugin**: `plugins/lobby-plugin` ist ein eigenständiges Paper-Plugin für
+  Lobby-Server. Es stellt je Gruppe einen schwebenden Kopf mit Hologramm in die
+  Welt — Anzeigename, Statuszeile mit Spielerzahl und Serveranzahl, darunter die
+  Klickfläche. Die Entities sind nie persistent; nach einem Absturz bleibt kein
+  halbes Hologramm zurück, `displays.yml` bleibt die Quelle der Wahrheit.
+- **Wechsel über Gruppen**: Eine Anzeige hängt an einer Gruppe, nicht an einem
+  Service. Ist genau ein Service erreichbar, geht der Klick direkt dorthin; bei
+  mehreren öffnet sich ein Auswahlmenü mit Kopf, Spielerzahl und Seiten — InvUI
+  schließt das Menü und fordert den Wechsel über den Proxy an. Ohne erreichbaren
+  Service meldet das Hologramm `Offline` und der Klick eine Wartemeldung.
+- **`/serverdisplay`**: `create <gruppe> <name> [--head <url>]`, `delete`, `move`,
+  `list` und `reload`, jeweils an der Position des Spielers und mit
+  Tab-Vervollständigung für Gruppen und IDs.
+
+### Intern
+
+- **InvUI 2.5.1**: Auswahlmenü über `xyz.xenondevs.invui:invui` aus dem
+  XenonDevs-Repository; im Plugin-Jar nach `dev.bytestorm.lobby.libs.invui`
+  relocatet, damit eine andere InvUI-Version in einem Nachbarplugin nicht stört.
+- **Neues Gradle-Modul**: `plugins:lobby-plugin` hängt nur an `api`, `codec` und
+  Redisson und liest die Registry mit demselben Protobuf-Codec wie Cloud und
+  Bridge.
+
 ## [1.1.0] - 2026-11-02
 
 ### Neu
