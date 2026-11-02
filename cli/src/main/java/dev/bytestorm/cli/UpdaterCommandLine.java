@@ -18,6 +18,10 @@ import java.util.StringJoiner;
  * <p>Die Quelle ist der {@link Updater}; die CLI listet Releases, vergleicht die
  * laufende Version ({@link CloudVersion}) und spielt ein Release ein. Die eigene
  * Version kommt austauschbar herein, damit Tests ohne Jar-Manifest laufen.
+ *
+ * <p>Der Download des Artefakts meldet seinen Fortschritt an einen
+ * {@link Updater.ProgressListener}: im Terminal zeichnet {@link UpdateProgress}
+ * einen Balken, Tests reichen einen stillen Empfänger herein.
  */
 public final class UpdaterCommandLine {
 
@@ -44,6 +48,7 @@ public final class UpdaterCommandLine {
 
     private final Updater updater;
     private final VersionProvider version;
+    private final Updater.ProgressListener progress;
 
     /**
      * @param updater Updater mit der konfigurierten Quelle
@@ -57,8 +62,19 @@ public final class UpdaterCommandLine {
      * @param version Quelle der laufenden Version
      */
     public UpdaterCommandLine(Updater updater, VersionProvider version) {
+        this(updater, version, UpdateProgress.console());
+    }
+
+    /**
+     * @param updater  Updater mit der konfigurierten Quelle
+     * @param version  Quelle der laufenden Version
+     * @param progress Empfänger des Download-Fortschritts
+     */
+    public UpdaterCommandLine(Updater updater, VersionProvider version,
+                              Updater.ProgressListener progress) {
         this.updater = Objects.requireNonNull(updater, "updater");
         this.version = Objects.requireNonNull(version, "version");
+        this.progress = Objects.requireNonNull(progress, "progress");
     }
 
     /**
@@ -152,7 +168,7 @@ public final class UpdaterCommandLine {
             if (!found.installable()) {
                 return Theme.warn("Release " + found.tag() + " hat kein Zip-Artefakt — nichts eingespielt.");
             }
-            int files = updater.install(found);
+            int files = updater.install(found, progress);
             return Theme.ok("Update eingespielt: " + found.tag() + " (" + files + " Dateien, vorherige"
                     + " Fassung unter update/backup/)") + System.lineSeparator()
                     + Theme.warn("Neustart nötig — die laufende Cloud arbeitet weiter mit den "

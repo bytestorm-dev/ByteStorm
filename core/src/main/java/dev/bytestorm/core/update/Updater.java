@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -56,6 +58,10 @@ import java.util.zip.ZipInputStream;
  * versionierte Cloud-Jars, die im neuen Archiv nicht mehr vorkommen, nachdem sie
  * gesichert wurden.
  *
+ * <p>Der Download des Zip-Artefakts ist der einzige Schritt, der dauern kann;
+ * {@link #install(Release, ProgressListener)} meldet dabei gelesene und gesamte
+ * Bytes, damit die Konsole einen Balken zeichnen kann.
+ *
  * <p>Die laufende Cloud tauscht damit ihre Jars aus, benutzt aber weiterhin die
  * geladenen Klassen — die neue Version greift erst nach einem Neustart.
  */
@@ -87,6 +93,12 @@ public final class Updater {
     public static final String LIB_MANIFEST_FILE = ".manifest.json";
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
+
+    /** Abstand zwischen zwei Fortschrittsmeldungen; häufiger flackert die Zeile nur. */
+    private static final long PROGRESS_INTERVAL_NANOS = 150_000_000L;
+
+    /** Puffergröße beim Schreiben des Downloads. */
+    private static final int COPY_BUFFER = 64 * 1024;
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(300);
     private static final int RELEASES_PER_PAGE = 50;
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
@@ -227,7 +239,20 @@ public final class Updater {
      * @throws UpdateException wenn das Artefakt fehlt, nicht ladbar ist oder das Archiv unbrauchbar ist
      */
     public int install(Release release) {
+        return install(release, ProgressListener.NONE);
+    }
+
+    /**
+     * Spielt ein Release ein und meldet dabei den Fortschritt des Downloads.
+     *
+     * @param release  Release mit Zip-Artefakt
+     * @param progress Empfänger des Fortschritts, z. B. eine Fortschrittsanzeige
+     * @return Anzahl der kopierten Dateien
+     * @throws UpdateException wenn das Artefakt fehlt, nicht ladbar ist oder das Archiv unbrauchbar ist
+     */
+    public int install(Release release, ProgressListener progress) {
         Objects.requireNonNull(release, "release");
+        Objects.requireNonNull(progress, "progress");
         if (release.asset() == null) {
             throw new UpdateException("Release " + release.tag() + " hat kein Zip-Artefakt");
         }
@@ -237,7 +262,7 @@ public final class Updater {
             Files.createDirectories(updateDirectory);
             Path archive = Files.createTempFile(updateDirectory, ".bytestorm-", ".zip");
             try {
-                download(release.asset(), archive);
+                download(release.asset(), archive, progress);
                 Path staging = unpack(archive, updateDirectory);
                 try {
                     return copyIntoPlace(staging);
@@ -252,24 +277,77 @@ public final class Updater {
         }
     }
 
-    private void download(URI url, Path target) throws IOException {
+    /**
+     * Lädt das Artefakt und meldet dabei den Fortschritt.
+     *
+     * <p>Statt {@code BodyHandlers.ofFile} wird der Rumpf als Strom gelesen: Nur so
+     * lässt sich zwischen zwei Bytes melden, wie weit der Download ist. Die
+     * Gesamtgröße kommt aus {@code Content-Length}; fehlt der Header, meldet der
+     * Fortschritt {@code -1}, und die Anzeige bleibt bei den gelesenen Bytes.
+     *
+     * @param url      Download-Adresse
+     * @param target   Zieldatei
+     * @param progress Empfänger des Fortschritts
+     * @throws IOException wenn der Download nicht geschrieben werden kann
+     */
+    private void download(URI url, Path target, ProgressListener progress) throws IOException {
         HttpRequest request = HttpRequest.newBuilder(url)
                 .timeout(REQUEST_TIMEOUT)
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "application/octet-stream")
                 .GET()
                 .build();
-        HttpResponse<Path> response;
+        HttpResponse<InputStream> response;
         try {
-            response = client.send(request, HttpResponse.BodyHandlers.ofFile(target));
+            response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new UpdateException("Download abgebrochen: " + url, e);
         }
         if (response.statusCode() != 200) {
+            response.body().close();
             throw new UpdateException("HTTP " + response.statusCode() + " für " + url);
         }
+
+        long total = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+        try (InputStream in = response.body(); OutputStream out = Files.newOutputStream(target)) {
+            copy(in, out, total, progress);
+        }
         log.info("Release-Artefakt geladen: {} ({} Bytes)", url, Files.size(target));
+    }
+
+    /**
+     * Kopiert den Rumpf in die Zieldatei und meldet den Fortschritt gedrosselt.
+     *
+     * @param in       Quelle
+     * @param out      Ziel
+     * @param total    Gesamtgröße oder {@code -1}
+     * @param progress Empfänger; der letzte Aufruf steht immer auf dem Endstand
+     * @throws IOException wenn Lesen oder Schreiben fehlschlägt
+     */
+    private static void copy(InputStream in, OutputStream out, long total,
+                             ProgressListener progress) throws IOException {
+        byte[] buffer = new byte[COPY_BUFFER];
+        long read = 0;
+        long reported = 0;
+        long lastReport = 0;
+        progress.onProgress(0, total);
+
+        int count;
+        while ((count = in.read(buffer)) != -1) {
+            out.write(buffer, 0, count);
+            read += count;
+            long now = System.nanoTime();
+            boolean finished = total > 0 && read >= total;
+            if (finished || now - lastReport >= PROGRESS_INTERVAL_NANOS) {
+                lastReport = now;
+                reported = read;
+                progress.onProgress(read, total);
+            }
+        }
+        if (reported != read) {
+            progress.onProgress(read, total);
+        }
     }
 
     private Path unpack(Path archive, Path updateDirectory) throws IOException {
@@ -475,6 +553,26 @@ public final class Updater {
             throw new IllegalArgumentException("repository muss die Form owner/name haben: " + repository);
         }
         return trimmed;
+    }
+
+    /**
+     * Empfängt den Fortschritt des Downloads.
+     *
+     * <p>Aufgerufen im Thread, der das Update ausführt — nicht öfter als alle
+     * 150 Millisekunden; der letzte Aufruf meldet immer das Ende. Die Anzeige darf
+     * blockieren, sollte aber nicht lange brauchen: Der Download wartet solange.
+     */
+    @FunctionalInterface
+    public interface ProgressListener {
+
+        /**
+         * @param read  bereits gelesene Bytes
+         * @param total Gesamtgröße in Bytes oder {@code -1}, wenn der Server sie nicht nennt
+         */
+        void onProgress(long read, long total);
+
+        /** Empfänger, der nichts tut — für Aufrufer ohne Anzeige. */
+        ProgressListener NONE = (read, total) -> { };
     }
 
     /**

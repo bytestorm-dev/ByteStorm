@@ -140,6 +140,19 @@ class UpdaterTest {
     }
 
     @Test
+    void installReportsTheDownloadProgress() {
+        List<long[]> steps = new ArrayList<>();
+
+        updater.install(updater.latest().orElseThrow(), (read, total) -> steps.add(new long[]{read, total}));
+
+        assertFalse(steps.isEmpty(), "ohne Meldung gäbe es keinen Balken");
+        assertEquals(0, steps.get(0)[0], "der erste Aufruf startet bei 0");
+        long[] last = steps.get(steps.size() - 1);
+        assertEquals(distribution.length, last[1], "Gesamtgröße aus Content-Length");
+        assertEquals(distribution.length, last[0], "am Ende ist alles gelesen");
+    }
+
+    @Test
     void installBringsTheServerPluginsWithIt() throws IOException {
         distribution = zip(java.util.Map.of(
                 "bytestorm.jar", "neu",

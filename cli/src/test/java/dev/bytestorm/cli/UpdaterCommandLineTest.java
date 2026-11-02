@@ -90,7 +90,8 @@ class UpdaterCommandLineTest {
 
     @Test
     void checkWithoutKnownVersionSaysSo() {
-        UpdaterCommandLine commandLine = new UpdaterCommandLine(updater, Optional::empty);
+        UpdaterCommandLine commandLine = new UpdaterCommandLine(updater, Optional::empty,
+                Updater.ProgressListener.NONE);
 
         String output = commandLine.execute(new String[]{"updater", "check"});
 
@@ -130,7 +131,7 @@ class UpdaterCommandLineTest {
     }
 
     private UpdaterCommandLine commandLine(String version) {
-        return new UpdaterCommandLine(updater, () -> Optional.of(version));
+        return new UpdaterCommandLine(updater, () -> Optional.of(version), Updater.ProgressListener.NONE);
     }
 
     private String baseUrl() {
