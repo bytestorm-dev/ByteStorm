@@ -39,7 +39,11 @@ class ServiceConsoleTest {
         assertTrue(text.contains("Lobby-1"), text);
         assertTrue(text.contains("\u001B[2J"), text);
         assertTrue(text.contains("bytestorm"), text);
-        assertTrue(ServiceConsole.PROMPT.contains("\u001B[1;36m"));
+        assertFalse(text.contains("Cloud Console"), "die Konsole startet ohne Vorspann: " + text);
+        assertTrue(ServiceConsole.PROMPT.contains("\u001B[1;36m"), ServiceConsole.PROMPT);
+        assertTrue(ServiceConsole.PROMPT.contains("bytestorm"), ServiceConsole.PROMPT);
+        assertTrue(ServiceConsole.PROMPT.contains("@"), ServiceConsole.PROMPT);
+        assertTrue(ServiceConsole.PROMPT.endsWith("\u001B[92m»\u001B[0m "), ServiceConsole.PROMPT);
     }
 
     @Test

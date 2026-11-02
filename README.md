@@ -78,7 +78,25 @@ Der Start ohne `config/cloud.json` öffnet den Wizard: MongoDB und Redis inklusi
 Verbindungstest, Runtime, Ports, Minecraft-EULA und die Gruppen (Proxy und Backends) in
 einem Durchgang. Erst nach den Tests wird die Konfiguration mit Rechten `0600` geschrieben.
 
-Danach in der Konsole:
+Die Konsole startet ohne Vorspann — oben die Startzeilen im Format
+`16:42:01|INFO`, darunter der Prompt mit Name und Version:
+
+```text
+$ java -jar bytestorm.jar
+16:42:01|INFO  ByteStorm startet in /srv/bytestorm (Log: /srv/bytestorm/logs/cloud.log)
+16:42:01|INFO  Verzeichnislayout geprüft (bytestorm)
+16:42:02|INFO  MongoDB verbunden: MongoSettings[uri=mongodb://cloud:***@127.0.0.1:27017/?authSource=admin, database=bytestorm]
+16:42:02|INFO  Redis verbunden: RedisSettings[address=redis://127.0.0.1:6379, password=***]
+16:42:03|INFO  Node-ServiceManager bereit (Runtime PROCESS, Logs /srv/bytestorm/logs, Scaling 3 s)
+16:42:03|INFO  ByteStorm bereit — Strg+C beendet die Cloud
+bytestorm@1.0.0» status
+```
+
+Jede Zeile trägt Uhrzeit und Level (`16:42:01|INFO`, `|WARN`, `|ERROR` — farbig am
+Terminal), den Logger-Namen nur in `logs/cloud.log`. Der Prompt ist `bytestorm@1.0.0» `;
+außerhalb eines Release-Jars steht dort `bytestorm@dev» `.
+
+Die wichtigsten Kommandos:
 
 ```text
 status                     Übersicht über Services und Gruppen

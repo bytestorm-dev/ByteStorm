@@ -49,16 +49,16 @@ public final class Logging {
             "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
 
     /**
-     * Konsole: nur Level, Logger und Text. Wer vor dem Terminal sitzt, braucht
-     * weder Datum noch Uhrzeit noch Thread-Namen je Zeile — all das steht in der
-     * Datei, die man bei Bedarf öffnet.
+     * Konsole: {@code 16:42:01|INFO  Text}. Die Uhrzeit bleibt kurz (nur
+     * Stunden), das Datum steht in der Datei; den Logger-Namen braucht am
+     * Terminal niemand, weil die Meldungen ihren Gegenstand selbst nennen.
      */
     private static final String CONSOLE_PATTERN =
-            "%-5level %logger{20} - %msg%n";
+            "%d{HH:mm:ss}|%-5level %msg%n";
 
     /** Wie {@link #CONSOLE_PATTERN}, aber mit farbigem Level. */
     private static final String CONSOLE_PATTERN_COLORED =
-            "%highlight(%-5level) %logger{20} - %msg%n";
+            "%d{HH:mm:ss}|%highlight(%-5level) %msg%n";
 
     private static final String CONFIGURED_KEY = "bytestorm.logging.file";
 

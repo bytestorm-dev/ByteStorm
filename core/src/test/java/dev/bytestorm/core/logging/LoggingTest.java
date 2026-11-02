@@ -103,14 +103,15 @@ class LoggingTest {
     }
 
     @Test
-    void consoleDropsTheTimestampAndColorsTheLevel() {
+    void consoleShowsShortTimeAndColorsTheLevel() {
         LoggerContext context = new LoggerContext();
         Logging.configure(context, temp, Level.INFO);
 
         String pattern = consolePattern(context);
 
-        assertFalse(pattern.contains("%d{"), "die Konsole zeigt keine Uhrzeit mehr: " + pattern);
-        assertTrue(pattern.contains("%-5level"), pattern);
+        assertTrue(pattern.startsWith("%d{HH:mm:ss}|"), "die Uhrzeit steht vor dem Level: " + pattern);
+        assertTrue(pattern.contains("%highlight(%-5level)"), pattern);
+        assertFalse(pattern.contains("%logger"), "die Konsole zeigt keinen Logger-Namen: " + pattern);
 
         // Ohne diese Prüfung fiele ein unbekanntes %highlight erst im Betrieb auf:
         // Logback schreibt das Wort dann als Text in jede Zeile.

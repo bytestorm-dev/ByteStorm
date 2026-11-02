@@ -671,11 +671,11 @@ public final class Bootstrap implements AutoCloseable {
             ensureConfigured(directory);
             bootstrap = start(directory);
         } catch (ConfigException e) {
-            System.err.println("ByteStorm: Konfiguration ungültig — " + e.getMessage());
+            System.err.println(Launcher.errorLine("Konfiguration ungültig — " + e.getMessage()));
             System.exit(1);
             return;
         } catch (RuntimeException e) {
-            System.err.println("ByteStorm: Start fehlgeschlagen — " + e.getMessage());
+            System.err.println(Launcher.errorLine("Start fehlgeschlagen — " + e.getMessage()));
             System.exit(1);
             return;
         }

@@ -116,12 +116,12 @@ Host macht daraus eine Warnung:
 Wer wissen will, welcher Key was darf, fragt die Cloud:
 
 ```
-bytestorm · › module list
+bytestorm@1.0.0» module list
 Name     Aktiviert  Zustand   Version  Zugriff
 rest     ja         ENABLED   1.0.0    2 Keys, 1× voll
 discord  nein       DISABLED  1.0.0    —
 
-bytestorm · › module info rest
+bytestorm@1.0.0» module info rest
 Name: rest
 Status: ENABLED
 Aktiviert: ja
@@ -143,7 +143,7 @@ freigibt. Sie erscheint nur bei Modulen, die REST-Scopes vergeben — so lässt 
 vor dem Setzen von `scopes.<name>` nachsehen, was ein Key danach darf.
 
 ```
-bytestorm · › module access
+bytestorm@1.0.0» module access
 Modul    Zugang      Scopes
 rest     apiKey      *
 rest     monitoring  monitoring.read, services.read

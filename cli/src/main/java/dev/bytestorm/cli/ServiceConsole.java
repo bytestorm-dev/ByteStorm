@@ -1,6 +1,7 @@
 package dev.bytestorm.cli;
 
 import dev.bytestorm.controller.ServiceController;
+import dev.bytestorm.core.update.CloudVersion;
 import dev.bytestorm.proto.ServiceInfo;
 import org.jline.reader.Candidate;
 import org.jline.reader.EndOfFileException;
@@ -36,12 +37,22 @@ public final class ServiceConsole implements AutoCloseable {
     /** Dateiname der persistenten History im Log-Verzeichnis der Cloud. */
     public static final String HISTORY_FILE_NAME = ".cli-history";
 
-    /** Prompt der Konsole, fett cyan mit gedämpftem Zeichen. */
-    public static final String PROMPT =
-            "\u001B[1;36mbytestorm\u001B[0m \u001B[2m·\u001B[0m \u001B[92m›\u001B[0m ";
+    /**
+     * Version im Prompt. Außerhalb eines Jars (Tests, IDE) kennt sie niemand —
+     * dann steht dort {@code dev} statt einer erfundenen Nummer.
+     */
+    private static final String VERSION = CloudVersion.current().orElse("dev");
+
+    /**
+     * Prompt der Konsole: {@code bytestorm@1.0.0» }. Der Name ist fett cyan, die
+     * Version gedämpft, das Zeichen grün und vom Eingabetext abgesetzt. Der
+     * Cursor blinkt direkt dahinter, weil JLine ihn an das Zeilenende setzt.
+     */
+    public static final String PROMPT = "\u001B[1;36mbytestorm\u001B[0m\u001B[2m@" + VERSION
+            + "\u001B[0m \u001B[92m»\u001B[0m ";
 
     /** Prompt ohne Farben, etwa bei {@code --no-color} oder an einer Pipe. */
-    private static final String PROMPT_PLAIN = "bytestorm> ";
+    private static final String PROMPT_PLAIN = "bytestorm@" + VERSION + "» ";
 
     private static final int HISTORY_SIZE = 2_000;
     private static final int HISTORY_FILE_SIZE = 10_000;
@@ -154,8 +165,8 @@ public final class ServiceConsole implements AutoCloseable {
      * Liest Kommandos, bis der Benutzer die Konsole beendet.
      */
     public void run() {
-        terminal.writer().println(welcome());
-        terminal.flush();
+        // Kein Vorspann: Die Startzeilen der Cloud stehen schon oben, der Prompt
+        // darunter genügt — so beginnt die Konsole dort, wo das Log aufhört.
         while (true) {
             String line;
             try {
@@ -196,43 +207,6 @@ public final class ServiceConsole implements AutoCloseable {
             }
             terminal.flush();
         }
-    }
-
-    /**
-     * @return Begrüßung als Rahmen mit den wichtigsten Einstiegen
-     */
-    private String welcome() {
-        String nl = System.lineSeparator();
-        int width = 66;
-        int inner = width - 2;
-        boolean fancy = Theme.unicode();
-        String horizontal = fancy ? "─" : "-";
-        String edge = Theme.accent(fancy ? "│" : "|");
-        String top = Theme.accent((fancy ? "╭" : "+") + horizontal.repeat(inner) + (fancy ? "╮" : "+"));
-        String bottom = Theme.accent((fancy ? "╰" : "+") + horizontal.repeat(inner) + (fancy ? "╯" : "+"));
-
-        StringBuilder out = new StringBuilder();
-        out.append(top).append(nl);
-        out.append(edge).append(fill(Theme.bold("  ByteStorm") + Theme.dim("  ·  Cloud Console"), inner))
-                .append(edge).append(nl);
-        out.append(edge).append(fill(Theme.dim("  Services, Gruppen und Logs im Blick."), inner))
-                .append(edge).append(nl);
-        out.append(edge).append(fill("  " + Theme.accent("status") + Theme.dim(" Übersicht   ")
-                + Theme.accent("watch") + Theme.dim(" live   ")
-                + Theme.accent("help") + Theme.dim(" Kommandos   ")
-                + Theme.accent("exit") + Theme.dim(" beenden"), inner)).append(edge).append(nl);
-        out.append(bottom).append(nl);
-        return out.toString();
-    }
-
-    /**
-     * @param styled bereits gefärbter Text
-     * @param width  sichtbare Zielbreite
-     * @return der Text, rechts auf die Breite aufgefüllt
-     */
-    private static String fill(String styled, int width) {
-        int visible = Theme.stripAnsi(styled).length();
-        return visible >= width ? styled : styled + " ".repeat(width - visible);
     }
 
     /**

@@ -6,6 +6,8 @@ import dev.bytestorm.launcher.layout.CloudLayout;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 /**
@@ -26,6 +28,9 @@ public final class Launcher {
 
     /** Vollqualifizierter Name der Bootstrap-Klasse. */
     public static final String BOOTSTRAP_CLASS = "dev.bytestorm.launcher.Bootstrap";
+
+    /** Uhrzeit der Fehlerzeile, im selben Format wie die Konsolenausgabe. */
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private Launcher() {
     }
@@ -104,8 +109,21 @@ public final class Launcher {
         return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
     }
 
+    /**
+     * Formatiert eine Meldung wie die Konsolenzeilen der Cloud, damit auch ein
+     * fehlgeschlagener Start dieselbe Form hat: {@code 16:42:01|ERROR Text}. Das
+     * Format steht hier statt in {@code Logging}, weil der Launcher vor dem
+     * Classloader läuft und nur JDK-Klassen sehen darf.
+     *
+     * @param message Meldung ohne Präfix
+     * @return die fertige Zeile
+     */
+    static String errorLine(String message) {
+        return LocalTime.now().format(TIME) + "|ERROR " + message;
+    }
+
     private static void fail(String message) {
-        System.err.println("ByteStorm: " + message);
+        System.err.println(errorLine(message));
         System.exit(1);
     }
 }

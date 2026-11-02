@@ -7,6 +7,9 @@ import ch.qos.logback.core.AppenderBase;
 import dev.bytestorm.cli.Theme;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -20,13 +23,16 @@ import java.util.function.Consumer;
  *
  * <p>Die Brücke ersetzt für die Dauer der Konsole den Konsolen-Appender: Jede
  * Zeile geht über {@code printAbove} über der Eingabe vorbei, kurz formatiert
- * ({@code HH:mm:ss LEVEL Logger - Text}) und ohne Thread-Namen, den man im
- * Terminal nicht braucht. Die Datei {@code logs/cloud.log} bleibt unberührt und
- * behält das ausführliche Format. Nach dem Schließen hängt wieder der
- * ursprüngliche Appender am Root-Logger, sodass Shutdown-Meldungen normal
- * erscheinen.
+ * ({@code 16:42:01|INFO  Text}, genau wie der Konsolen-Appender von
+ * {@code Logging}) und ohne Thread- oder Logger-Namen, die man im Terminal nicht
+ * braucht. Die Datei {@code logs/cloud.log} bleibt unberührt und behält das
+ * ausführliche Format. Nach dem Schließen hängt wieder der ursprüngliche
+ * Appender am Root-Logger, sodass Shutdown-Meldungen normal erscheinen.
  */
 public final class ConsoleLogBridge implements AutoCloseable {
+
+    /** Uhrzeit der Konsole: Stunden, Minuten, Sekunden. */
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private final ch.qos.logback.classic.Logger root;
     private final Appender<ILoggingEvent> appender;
@@ -76,34 +82,29 @@ public final class ConsoleLogBridge implements AutoCloseable {
         // Version ihre eigene Level-Klasse, der Name bleibt stabil.
         String levelName = event.getLevel() == null ? "INFO" : event.getLevel().toString();
         String level = switch (levelName) {
-            case "ERROR" -> Theme.bold(Theme.red("ERR "));
-            case "WARN" -> Theme.yellow("WARN");
+            case "ERROR" -> Theme.bold(Theme.red(pad(levelName)));
+            case "WARN" -> Theme.yellow(pad(levelName));
             case "DEBUG", "TRACE" -> Theme.dim(pad(levelName));
-            default -> Theme.green("INFO");
+            default -> Theme.green(pad(levelName));
         };
-        String logger = Theme.dim(shortLogger(event.getLoggerName()));
-        return "  " + level + " " + logger + " " + event.getFormattedMessage();
+        return time(event.getTimeStamp()) + Theme.dim("|") + level + " " + event.getFormattedMessage();
+    }
+
+    /**
+     * @param timestamp Zeitpunkt des Ereignisses in Millisekunden
+     * @return die Uhrzeit in der Zeitzone des Rechners
+     */
+    private static String time(long timestamp) {
+        return Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault())
+                .toLocalTime().format(TIME);
     }
 
     /**
      * @param level Levelname
-     * @return der Name auf vier Zeichen aufgefüllt, damit die Spalte steht
+     * @return der Name auf fünf Zeichen aufgefüllt, damit die Spalte steht
      */
     private static String pad(String level) {
-        return level.length() >= 4 ? level.substring(0, 4) : level + " ".repeat(4 - level.length());
-    }
-
-    /**
-     * Loggernamen im Terminal kurz halten: Der letzte Abschnitt reicht, weil die
-     * Zeile ohnehin nur den Ablauf begleitet.
-     */
-    private static String shortLogger(String name) {
-        if (name == null || name.isBlank()) {
-            return "";
-        }
-        int dot = name.lastIndexOf('.');
-        String simple = dot < 0 ? name : name.substring(dot + 1);
-        return "[" + simple + "]";
+        return level.length() >= 5 ? level : level + " ".repeat(5 - level.length());
     }
 
     private static Appender<ILoggingEvent> findConsole(ch.qos.logback.classic.Logger root) {

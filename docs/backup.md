@@ -28,10 +28,10 @@ Die Datei enthält Secrets und wird deshalb mit `0600` angelegt.
 ## Sichern
 
 ```
-bytestorm · › backup
+bytestorm@1.0.0» backup
 ✔ Sicherung angelegt: /home/cloud/backups/bytestorm-20261101-153000.zip (84,2 MB, 5 Collections, 412 Dokumente, 18311 Dateien)
 
-bytestorm · › backup list
+bytestorm@1.0.0» backup list
 bytestorm-20261101-153000.zip   84,2 MB   01.11.2026 15:30
 ```
 
@@ -73,8 +73,8 @@ systemctl start bytestorm
 Danach in der Konsole prüfen:
 
 ```
-bytestorm · › doctor          # Pfade, Ports, Java, Mongo/Redis, Forwarding
-bytestorm · › status          # Services und Gruppen
+bytestorm@1.0.0» doctor          # Pfade, Ports, Java, Mongo/Redis, Forwarding
+bytestorm@1.0.0» status          # Services und Gruppen
 ```
 
 `doctor --fix` wendet Templates erneut an, falls im Service-Ordner noch
