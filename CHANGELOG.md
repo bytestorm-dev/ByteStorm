@@ -6,6 +6,17 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+## [1.2.1] - 2026-11-02
+
+### Behoben
+
+- **Update ersetzt jetzt wirklich die Cloud-Jars**: Der Updater kopierte die
+  versionierten Jars (`lib/cli-1.2.0.jar`) nur neben die alten. Der alphabetisch
+  sortierende `LibClassLoader` griff danach weiter zur älteren Fassung — nach dem
+  Neustart lief die alte Version. Alte Cloud-Jars wandern nun vor dem Löschen nach
+  `update/backup/lib/`, und `lib/dependencies.txt` gehört zum Update. Eigene Jars
+  unter `lib/` und alles außerhalb von `lib/` bleiben unangetastet.
+
 ## [1.2.0] - 2026-11-02
 
 ### Neu
