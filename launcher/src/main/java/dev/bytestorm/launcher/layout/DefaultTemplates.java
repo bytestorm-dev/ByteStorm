@@ -91,6 +91,11 @@ public final class DefaultTemplates {
                     # Der Proxy authentifiziert die Spieler (§14), deshalb kein Mojang-Login hier.
                     online-mode=false
                     server-port=%PORT%
+                    # Zugang regelt der Proxy (Wartungsmodus und Rechte), nicht die Whitelist
+                    # des Backends: Sie würde jeden Spieler abweisen, den nur der Proxy kennt,
+                    # und enforce-whitelist träfe auch Operatoren.
+                    white-list=false
+                    enforce-whitelist=false
                     """),
             new File("SERVER/" + PAPER_GLOBAL_CONFIG, """
                     # Von ByteStorm angelegtes Standard-Template. Anpassungen bleiben erhalten.

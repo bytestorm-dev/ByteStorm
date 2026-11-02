@@ -109,6 +109,9 @@ class DefaultTemplatesTest {
 
         assertTrue(properties.contains("online-mode=false"), properties);
         assertTrue(properties.contains("server-port=%PORT%"), properties);
+        assertTrue(properties.contains("white-list=false"),
+                "die Backend-Whitelist ist standardmäßig aus: " + properties);
+        assertTrue(properties.contains("enforce-whitelist=false"), properties);
         assertTrue(paper.contains("enabled: true"), paper);
         assertTrue(paper.contains("online-mode: true"), "muss zu online-mode in velocity.toml passen");
         assertTrue(paper.contains("secret: '%SECRET%'"), paper);

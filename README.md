@@ -89,11 +89,11 @@ $ java -jar bytestorm.jar
 16:42:02|INFO  Redis verbunden: RedisSettings[address=redis://127.0.0.1:6379, password=***]
 16:42:03|INFO  Node-ServiceManager bereit (Runtime PROCESS, Logs /srv/bytestorm/logs, Scaling 3 s)
 16:42:03|INFO  ByteStorm bereit — Strg+C beendet die Cloud
-bytestorm@1.0.0» status
+bytestorm@1.0.1» status
 ```
 
 Jede Zeile trägt Uhrzeit und Level (`16:42:01|INFO`, `|WARN`, `|ERROR` — farbig am
-Terminal), den Logger-Namen nur in `logs/cloud.log`. Der Prompt ist `bytestorm@1.0.0» `;
+Terminal), den Logger-Namen nur in `logs/cloud.log`. Der Prompt ist `bytestorm@1.0.1» `;
 außerhalb eines Release-Jars steht dort `bytestorm@dev» `.
 
 Die wichtigsten Kommandos:

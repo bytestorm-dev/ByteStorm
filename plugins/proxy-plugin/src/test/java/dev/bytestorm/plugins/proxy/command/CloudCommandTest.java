@@ -47,6 +47,21 @@ class CloudCommandTest {
     }
 
     @Test
+    void helpShowsEverySubcommandWithItsOwnUsage() throws Exception {
+        String help = joined(run("help"));
+
+        assertTrue(help.contains("/cloud service logs"), help);
+        assertTrue(help.contains("/cloud service exec"), help);
+        assertTrue(help.contains("/cloud group scale"), help);
+        assertTrue(help.contains("/cloud maintenance"), help);
+        assertTrue(help.contains("/cloud player kick"), help);
+        assertFalse(help.contains("list|"),
+                "keine Sammel-Schreibweise mehr, jedes Unterkommando hat eine Zeile: " + help);
+        assertEquals(22, help.split("/cloud ", -1).length - 1,
+                "eine Zeile je Unterkommando: " + help);
+    }
+
+    @Test
     void anEmptyLineShowsTheHelpToo() throws Exception {
         assertTrue(joined(run("")).contains("status"));
         assertTrue(cloud.calls.isEmpty(), "die Hilfe fragt die Cloud nicht");
