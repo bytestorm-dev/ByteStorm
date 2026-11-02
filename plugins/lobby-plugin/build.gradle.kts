@@ -28,6 +28,9 @@ dependencies {
 
     // Auswahlmenü, wenn eine Gruppe mehr als einen Service hat.
     implementation(libs.invui)
+
+    // Sprachdateien unter messages/; dieselbe Bibliothek wie im Proxy-Plugin.
+    implementation(libs.jackson.databind)
 }
 
 tasks.shadowJar {
@@ -39,6 +42,7 @@ tasks.shadowJar {
     relocate("org.redisson", "dev.bytestorm.lobby.libs.redisson")
     // InvUI liegt in vielen Plugins in einer anderen Version; relocate hält sie auseinander.
     relocate("xyz.xenondevs.invui", "dev.bytestorm.lobby.libs.invui")
+    relocate("com.fasterxml.jackson", "dev.bytestorm.lobby.libs.jackson")
     mergeServiceFiles()
 }
 

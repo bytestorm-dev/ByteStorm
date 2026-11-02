@@ -1,10 +1,10 @@
 package dev.bytestorm.plugins.lobby.display;
 
 import dev.bytestorm.plugins.lobby.LobbyPlugin;
+import dev.bytestorm.plugins.lobby.message.Messages;
 import dev.bytestorm.plugins.lobby.redis.LiveState;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceState;
-import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
@@ -60,14 +60,13 @@ public final class ServerDisplayService {
     static final float STATUS_SCALE = 1.6f;
     static final float HINT_SCALE = 1.6f;
 
-    static final String HINT = "<dark_gray>►▻ <gray>Klick zum Betreten <dark_gray>◅◄";
-
     /** Zwei Events derselben Klickbewegung dürfen nicht doppelt zählen. */
     private static final long INTERACTION_GUARD_NANOS = 100_000_000L;
 
     private final LobbyPlugin plugin;
     private final LiveState live;
     private final DisplayStore store;
+    private final Messages messages;
     private final ServerSelectMenu menu;
 
     private final Map<Integer, ServerDisplay> displays = new ConcurrentHashMap<>();
@@ -87,15 +86,18 @@ public final class ServerDisplayService {
     private long tick;
 
     /**
-     * @param plugin Plugin für Scheduler und Logger
-     * @param live   Lesezugriff auf die Registry
-     * @param store  Persistenz der Anzeigen
+     * @param plugin   Plugin für Scheduler und Logger
+     * @param live     Lesezugriff auf die Registry
+     * @param store    Persistenz der Anzeigen
+     * @param messages Sprachdateien für Status, Hinweis und Meldungen
      */
-    public ServerDisplayService(LobbyPlugin plugin, LiveState live, DisplayStore store) {
+    public ServerDisplayService(LobbyPlugin plugin, LiveState live, DisplayStore store,
+                                Messages messages) {
         this.plugin = plugin;
         this.live = live;
         this.store = store;
-        this.menu = new ServerSelectMenu(this);
+        this.messages = messages;
+        this.menu = new ServerSelectMenu(this, messages);
         for (ServerDisplay display : store.load()) {
             displays.put(display.id(), display);
         }
@@ -237,8 +239,7 @@ public final class ServerDisplayService {
 
         List<ServiceInfo> online = onlineServices(display.group());
         if (online.isEmpty()) {
-            message(player, "<dark_aqua>ByteStorm <dark_gray>● <gray><server> <gray>ist gerade "
-                    + "<red>offline</red>.", display);
+            message(player, "join.offline", display);
             return;
         }
         if (online.size() == 1) {
@@ -264,16 +265,14 @@ public final class ServerDisplayService {
         }
         lastSwitch.put(player.getUniqueId(), millis);
 
-        message(player, "<dark_aqua>ByteStorm <dark_gray>● <gray>Du wirst mit <server> "
-                + "<gray>verbunden<dark_gray>…", display);
+        message(player, "join.connecting", display);
 
         UUID uuid = player.getUniqueId();
         String name = player.getName();
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             if (!live.requestSwitch(uuid, name, service)) {
-                Bukkit.getGlobalRegionScheduler().execute(plugin, () -> message(player,
-                        "<dark_aqua>ByteStorm <dark_gray>● <red>Wechsel nicht möglich<gray> — "
-                                + "der Proxy ist nicht erreichbar.", display));
+                Bukkit.getGlobalRegionScheduler().execute(plugin,
+                        () -> message(player, "join.unreachable", display));
             }
         });
         return true;
@@ -365,7 +364,7 @@ public final class ServerDisplayService {
     private String statusText(ServerDisplay display) {
         List<ServiceInfo> services = groups.getOrDefault(
                 display.group().toLowerCase(Locale.ROOT), List.of());
-        return DisplayStatus.text(services);
+        return DisplayStatus.text(messages, services);
     }
 
     /** Setzt die Statuszeile nur, wenn sich der Text geändert hat. */
@@ -412,7 +411,8 @@ public final class ServerDisplayService {
         TextDisplay name = spawnText(base.clone().add(0, NAME_HEIGHT, 0), display.displayName(), NAME_SCALE);
         TextDisplay status = spawnText(base.clone().add(0, STATUS_HEIGHT, 0),
                 statusText(display), STATUS_SCALE);
-        TextDisplay hint = spawnText(base.clone().add(0, HINT_HEIGHT, 0), HINT, HINT_SCALE);
+        TextDisplay hint = spawnText(base.clone().add(0, HINT_HEIGHT, 0),
+                messages.text("display.hint"), HINT_SCALE);
 
         Interaction hitbox = world.spawn(base.clone(), Interaction.class, interaction -> {
             interaction.setPersistent(false);
@@ -479,13 +479,19 @@ public final class ServerDisplayService {
                 new Quaternionf()));
     }
 
-    private void message(Player player, String text, ServerDisplay display) {
+    /**
+     * Schickt eine Meldung aus den Sprachdateien, mit dem Anzeigenamen als {@code %server%}.
+     *
+     * @param player  Empfänger
+     * @param key     Schlüssel unter {@code join.}
+     * @param display angeklickte Anzeige
+     */
+    private void message(Player player, String key, ServerDisplay display) {
         if (!player.isOnline()) {
             return;
         }
-        String rendered = text.replace("<server>", display.displayName());
-        player.sendMessage(Component.text().append(
-                MiniMessage.miniMessage().deserialize(rendered)).build());
+        String rendered = messages.prefixed(key, Map.of("server", display.displayName()));
+        player.sendMessage(MiniMessage.miniMessage().deserialize(rendered));
     }
 
     /**

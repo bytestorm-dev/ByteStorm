@@ -1,5 +1,6 @@
 package dev.bytestorm.plugins.lobby.display;
 
+import dev.bytestorm.plugins.lobby.message.Messages;
 import dev.bytestorm.proto.ServiceInfo;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -13,13 +14,15 @@ import xyz.xenondevs.invui.window.Window;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Auswahlmenü einer Gruppe, wenn mehr als ein Service online ist.
  *
  * <p>Jeder Service ist ein Kopf mit Name, Spielerzahl und Hinweis; ein Klick
  * schließt das Menü und fordert den Wechsel an. Die Liste ist seitenweise, damit
- * auch eine große Gruppe vollständig erreichbar bleibt.
+ * auch eine große Gruppe vollständig erreichbar bleibt. Alle Texte kommen aus
+ * {@code messages/<sprache>.json}.
  *
  * <p>InvUI arbeitet nur im Server-Thread; der Aufruf kommt aus dem Klick-Event und
  * bleibt damit auf dem richtigen Thread.
@@ -27,12 +30,15 @@ import java.util.List;
 public final class ServerSelectMenu {
 
     private final ServerDisplayService displays;
+    private final Messages messages;
 
     /**
      * @param displays Service, der den Wechsel ausführt
+     * @param messages Sprachdateien
      */
-    public ServerSelectMenu(ServerDisplayService displays) {
+    public ServerSelectMenu(ServerDisplayService displays, Messages messages) {
         this.displays = displays;
+        this.messages = messages;
     }
 
     /**
@@ -49,9 +55,8 @@ public final class ServerSelectMenu {
         BoundItem back = BoundItem.pagedBuilder()
                 .setItemProvider((viewer, paged) -> new ItemBuilder(Material.ARROW)
                         .setName(paged.getPage() > 0
-                                ? "<gray>Seite <white>" + (paged.getPage() + 1)
-                                + "<gray>/<white>" + paged.getPageCount()
-                                : "<dark_gray>Anfang"))
+                                ? page(paged.getPage() + 1, paged.getPageCount())
+                                : messages.text("menu.first")))
                 .addClickHandler((item, paged, click) -> {
                     if (paged.getPage() > 0) {
                         paged.setPage(paged.getPage() - 1);
@@ -62,9 +67,8 @@ public final class ServerSelectMenu {
         BoundItem forward = BoundItem.pagedBuilder()
                 .setItemProvider((viewer, paged) -> new ItemBuilder(Material.ARROW)
                         .setName(paged.getPage() < paged.getPageCount() - 1
-                                ? "<gray>Seite <white>" + (paged.getPage() + 2)
-                                + "<gray>/<white>" + paged.getPageCount()
-                                : "<dark_gray>Ende"))
+                                ? page(paged.getPage() + 2, paged.getPageCount())
+                                : messages.text("menu.last")))
                 .addClickHandler((item, paged, click) -> {
                     if (paged.getPage() < paged.getPageCount() - 1) {
                         paged.setPage(paged.getPage() + 1);
@@ -88,7 +92,7 @@ public final class ServerSelectMenu {
 
         Window.mergedBuilder()
                 .setViewer(player)
-                .setTitle("<dark_aqua>" + display.displayName() + " <dark_gray>● <gray>Server wählen")
+                .setTitle(messages.text("menu.title", Map.of("server", display.displayName())))
                 .setGui(gui)
                 .build()
                 .open();
@@ -106,16 +110,24 @@ public final class ServerSelectMenu {
 
         return Item.builder()
                 .setItemProvider(new ItemBuilder(Material.PLAYER_HEAD)
-                        .setName("<white>" + service.getName())
+                        .setName(messages.text("menu.entry.name",
+                                Map.of("service", service.getName())))
                         .addLoreLines(
-                                "<gray>Gruppe <white>" + service.getGroup(),
-                                "<gray>Spieler <white>" + players,
+                                messages.text("menu.entry.group",
+                                        Map.of("group", service.getGroup())),
+                                messages.text("menu.entry.players", Map.of("players", players)),
                                 "",
-                                "<aqua>Klicken zum Betreten"))
+                                messages.text("menu.entry.join")))
                 .addClickHandler((item, click) -> {
                     click.player().closeInventory();
                     displays.connect(click.player(), service.getName(), display);
                 })
                 .build();
+    }
+
+    private String page(int page, int pages) {
+        return messages.text("menu.page", Map.of(
+                "page", String.valueOf(page),
+                "pages", String.valueOf(pages)));
     }
 }

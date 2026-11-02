@@ -1,0 +1,236 @@
+package dev.bytestorm.plugins.lobby.message;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+
+/**
+ * Sprachdateien des Lobby-Plugins.
+ *
+ * <p>Aufbau wie im Proxy-Plugin: {@code messages/<sprache>.json} im Jar, dazu
+ * Überschreibungen unter {@code messages/} im Datenverzeichnis. Die Texte stehen
+ * in einem {@code messages}-Objekt und dürfen verschachtelt sein; verschachtelte
+ * Objekte werden zu Punkt-Schlüsseln ({@code menu.entry.group}).
+ *
+ * <p>Die Texte sind MiniMessage und dürfen Zeilenumbrüche enthalten — {@code \n}
+ * in JSON oder echte Zeilen in der Datei. Platzhalter stehen in Prozentzeichen
+ * ({@code %server%}), damit sie nicht mit MiniMessage-Tags kollidieren.
+ *
+ * <p>Fehlt ein Schlüssel, liefert {@link #text(String)} den Schlüssel selbst
+ * zurück: ein sichtbarer Fehler statt einer leeren Zeile. Fehlt eine ganze
+ * Sprache, gilt Englisch — {@link #language()} nennt die tatsächlich verwendete.
+ */
+public final class Messages {
+
+    /** Ressourcenordner der mitgelieferten Sprachen. */
+    public static final String RESOURCE_DIRECTORY = "messages";
+
+    /** Sprache, die immer mitgeliefert wird und als Rückfallebene dient. */
+    public static final String DEFAULT_LANGUAGE = "en";
+
+    /** Objekt, das die Texte einer Datei bündelt; fehlt es, gilt das Wurzelobjekt. */
+    public static final String MESSAGES_NODE = "messages";
+
+    /** Endung der Sprachdateien; auch {@code LobbyPlugin} nutzt sie beim Kopieren. */
+    public static final String SUFFIX = ".json";
+
+
+    private static final ObjectMapper JSON = JsonMapper.builder().build();
+
+    private final String language;
+    private final Map<String, String> entries;
+
+    private Messages(String language, Map<String, String> entries) {
+        this.language = language;
+        this.entries = Map.copyOf(entries);
+    }
+
+    /**
+     * Lädt die gewünschte Sprache über der englischen Rückfallebene.
+     *
+     * @param language          Sprachcode, z. B. {@code de}
+     * @param overrideDirectory Ordner mit Überschreibungen, darf {@code null} sein
+     * @return die geladenen Texte
+     * @throws IOException wenn eine gefundene Datei unlesbar ist oder gar keine Sprache existiert
+     */
+    public static Messages load(String language, Path overrideDirectory) throws IOException {
+        String requested = language == null || language.isBlank() ? DEFAULT_LANGUAGE : language.trim();
+
+        Map<String, String> entries = new LinkedHashMap<>(readClasspath(DEFAULT_LANGUAGE));
+        boolean languageFound = requested.equals(DEFAULT_LANGUAGE);
+        if (!languageFound) {
+            Map<String, String> translated = readClasspath(requested);
+            if (!translated.isEmpty()) {
+                entries.putAll(translated);
+                languageFound = true;
+            }
+        }
+
+        Path override = overrideDirectory == null ? null : overrideDirectory.resolve(requested + SUFFIX);
+        if (override != null && Files.isRegularFile(override)) {
+            entries.putAll(readFile(override));
+            languageFound = true;
+        }
+
+        if (entries.isEmpty()) {
+            throw new IOException("Keine Sprachdatei gefunden — erwartet unter "
+                    + RESOURCE_DIRECTORY + "/" + requested + SUFFIX);
+        }
+        return new Messages(languageFound ? requested : DEFAULT_LANGUAGE, entries);
+    }
+
+    /**
+     * @return die tatsächlich verwendete Sprache; weicht von der gewünschten ab,
+     *         wenn keine Sprachdatei existiert
+     */
+    public String language() {
+        return language;
+    }
+
+    /**
+     * @return alle Schlüssel, alphabetisch — Basis für Vollständigkeitstests
+     */
+    public Set<String> keys() {
+        return Set.copyOf(new TreeSet<>(entries.keySet()));
+    }
+
+    /**
+     * @param key Schlüssel, z. B. {@code menu.title}
+     * @return der Rohtext ohne Platzhalterersetzung
+     */
+    public Optional<String> find(String key) {
+        return Optional.ofNullable(key == null ? null : entries.get(key));
+    }
+
+    /**
+     * @param key Schlüssel
+     * @return der Text; fehlt der Schlüssel, der Schlüssel selbst
+     */
+    public String text(String key) {
+        return text(key, Map.of());
+    }
+
+    /**
+     * @param key    Schlüssel
+     * @param values Platzhalter und Werte
+     * @return der Text mit ersetzten Platzhaltern; fehlt der Schlüssel, der Schlüssel selbst
+     */
+    public String text(String key, Map<String, String> values) {
+        Objects.requireNonNull(key, "key");
+        return find(key).map(template -> replace(template, values)).orElse(key);
+    }
+
+    /**
+     * Wie {@link #text(String, Map)}, davor der gemeinsame Chat-Präfix.
+     *
+     * @param key    Schlüssel ohne Präfix
+     * @param values Platzhalter und Werte
+     * @return Präfix und Text
+     */
+    public String prefixed(String key, Map<String, String> values) {
+        return text("prefix") + text(key, values);
+    }
+
+    /**
+     * Ersetzt {@code %name%}-Platzhalter. Unbekannte Platzhalter bleiben stehen,
+     * damit ein fehlender Wert auffällt statt zu verschwinden.
+     *
+     * @param template Vorlage aus der Sprachdatei
+     * @param values   Platzhalter und Werte
+     * @return der ersetzte Text
+     */
+    public static String replace(String template, Map<String, String> values) {
+        if (template == null) {
+            return "";
+        }
+        if (values == null || values.isEmpty()) {
+            return template;
+        }
+        String result = template;
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            if (entry.getKey() == null || entry.getValue() == null) {
+                continue;
+            }
+            result = result.replace("%" + entry.getKey() + "%", entry.getValue());
+        }
+        return result;
+    }
+
+    private static Map<String, String> readClasspath(String language) throws IOException {
+        String resource = RESOURCE_DIRECTORY + "/" + language + SUFFIX;
+        ClassLoader loader = Messages.class.getClassLoader();
+        try (InputStream stream = loader == null ? null : loader.getResourceAsStream(resource)) {
+            if (stream == null) {
+                return Map.of();
+            }
+            return read(stream.readAllBytes(), resource);
+        }
+    }
+
+    private static Map<String, String> readFile(Path file) throws IOException {
+        return read(Files.readAllBytes(file), file.toString());
+    }
+
+    private static Map<String, String> read(byte[] content, String source) throws IOException {
+        JsonNode root;
+        try {
+            root = JSON.readTree(new String(content, StandardCharsets.UTF_8));
+        } catch (JsonProcessingException e) {
+            throw new IOException(source + " ist kein gültiges JSON: " + e.getOriginalMessage(), e);
+        }
+        if (root == null || !root.isObject()) {
+            throw new IOException(source + " muss ein JSON-Objekt sein");
+        }
+        JsonNode messages = root.get(MESSAGES_NODE);
+        if (messages != null) {
+            if (!messages.isObject()) {
+                throw new IOException(source + ": '" + MESSAGES_NODE + "' muss ein JSON-Objekt sein");
+            }
+            root = messages;
+        }
+        Map<String, String> entries = new LinkedHashMap<>();
+        collect(root, "", entries, source);
+        return entries;
+    }
+
+    /**
+     * Flacht verschachtelte Objekte zu Punkt-Schlüsseln ab.
+     *
+     * @param node   aktuelles JSON-Objekt
+     * @param prefix Pfad bis hierher, leer im Wurzelobjekt
+     * @param target gesammelte Texte
+     * @param source Dateiname für Fehlermeldungen
+     * @throws IOException wenn ein Wert kein Text ist
+     */
+    private static void collect(JsonNode node, String prefix, Map<String, String> target,
+                                String source) throws IOException {
+        Iterator<Map.Entry<String, JsonNode>> fields = node.properties().iterator();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            String key = prefix.isEmpty() ? field.getKey() : prefix + "." + field.getKey();
+            JsonNode value = field.getValue();
+            if (value.isObject()) {
+                collect(value, key, target, source);
+                continue;
+            }
+            if (!value.isTextual()) {
+                throw new IOException(source + ": Wert von '" + key + "' muss Text sein");
+            }
+            target.put(key, value.asText());
+        }
+    }
+}

@@ -4,6 +4,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Einstellungen des Lobby-Plugins (§15, §20).
@@ -13,6 +14,10 @@ import java.util.Map;
  * mitgibt. Ein Lobby-Server, den die Cloud gestartet hat, braucht damit keine
  * eigene Konfiguration; die Datei ist für manuell gestartete Server da.
  *
+ * <p>Sichtbare Texte stehen nicht hier, sondern unter {@code messages/};
+ * {@code language} wählt die Datei.
+ *
+ * @param language             Sprachcode, z. B. {@code de}
  * @param redisAddress         Adresse mit {@code redis://} oder {@code rediss://}
  * @param redisPassword        Passwort oder {@code null}
  * @param refreshSeconds       Abstand, in dem die Service-Liste gelesen wird
@@ -20,6 +25,7 @@ import java.util.Map;
  * @param switchCooldownMillis Sperre zwischen zwei Wechseln je Spieler
  */
 public record LobbySettings(
+        String language,
         String redisAddress,
         @Nullable String redisPassword,
         int refreshSeconds,
@@ -32,9 +38,30 @@ public record LobbySettings(
     /** Umgebungsvariable des Redis-Passworts, wie sie {@code BridgeSettings} nutzt. */
     public static final String ENV_REDIS_PASSWORD = "BYTESTORM_REDIS_PASSWORD";
 
+    /** Sprache der mitgelieferten Texte, die ohne Angabe gilt. */
+    public static final String DEFAULT_LANGUAGE = "de";
+
     private static final int DEFAULT_REFRESH_SECONDS = 2;
     private static final double DEFAULT_ANIMATION_RADIUS = 64;
     private static final long DEFAULT_SWITCH_COOLDOWN_MILLIS = 2_000L;
+
+    private static final Pattern LANGUAGE_CODE = Pattern.compile("[a-z]{2,3}(?:_[A-Z]{2})?");
+
+    /**
+     * @param language             Sprachcode
+     * @param redisAddress         Adresse
+     * @param redisPassword        Passwort
+     * @param refreshSeconds       Aktualisierungsabstand
+     * @param animationRadius      Animationsradius
+     * @param switchCooldownMillis Sperre zwischen zwei Wechseln
+     */
+    public LobbySettings {
+        language = language == null || language.isBlank() ? DEFAULT_LANGUAGE : language.trim();
+        if (!LANGUAGE_CODE.matcher(language).matches()) {
+            throw new IllegalArgumentException("language ist kein Sprachcode (z. B. 'de' oder 'pt_BR'): "
+                    + language);
+        }
+    }
 
     /**
      * Liest die Einstellungen. Fehlt die Adresse überall, wirft der Aufruf —
@@ -44,7 +71,7 @@ public record LobbySettings(
      * @param config      geladene {@code config.yml}
      * @param environment Umgebungsvariablen des Prozesses
      * @return geprüfte Einstellungen
-     * @throws IllegalArgumentException wenn die Redis-Adresse fehlt
+     * @throws IllegalArgumentException wenn die Redis-Adresse fehlt oder ein Wert unbrauchbar ist
      */
     public static LobbySettings from(FileConfiguration config, Map<String, String> environment) {
         String address = firstNonBlank(config.getString("redis.address"),
@@ -58,6 +85,7 @@ public record LobbySettings(
                 environment.get(ENV_REDIS_PASSWORD));
 
         return new LobbySettings(
+                config.getString("language", DEFAULT_LANGUAGE),
                 normalizeAddress(address),
                 password,
                 clamp(config.getInt("display.refreshSeconds", DEFAULT_REFRESH_SECONDS), 1, 60),
@@ -98,7 +126,8 @@ public record LobbySettings(
 
     @Override
     public String toString() {
-        return "LobbySettings[redisAddress=" + redisAddress
+        return "LobbySettings[language=" + language
+                + ", redisAddress=" + redisAddress
                 + ", redisPassword=" + (redisPassword == null ? "nicht gesetzt" : "***")
                 + ", refreshSeconds=" + refreshSeconds
                 + ", animationRadius=" + animationRadius

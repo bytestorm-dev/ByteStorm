@@ -1,3 +1,7 @@
+# Sprache der Meldungen: de oder en. Weitere Sprachen gehen als eigene Datei
+# nach messages/ im Datenverzeichnis des Plugins.
+language: de
+
 # Redis-Zugang der Cloud. Leer lassen heißt: aus der Umgebung lesen
 # (BYTESTORM_REDIS_ADDRESS / BYTESTORM_REDIS_PASSWORD), die der Node beim Start
 # in den Service-Ordner schreibt. Ein Eintrag hier ist nur für manuell

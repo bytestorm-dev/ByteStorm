@@ -2,6 +2,7 @@ package dev.bytestorm.plugins.lobby.command;
 
 import dev.bytestorm.plugins.lobby.LobbyPlugin;
 import dev.bytestorm.plugins.lobby.display.ServerDisplay;
+import dev.bytestorm.plugins.lobby.message.Messages;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
@@ -15,41 +16,45 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * {@code /serverdisplay} — Anzeigen für Gruppen anlegen, verschieben, löschen.
  *
  * <p>Der Standort ist immer der des Spielers: Wer eine Anzeige baut, steht dort,
  * wo sie schweben soll. Der Anzeigename ist der Rest der Zeile und darf Leerzeichen
- * enthalten; {@code --head <url>} setzt optional die Textur.
+ * enthalten; {@code --head <url>} setzt optional die Textur. Die Texte stehen in
+ * {@code messages/<sprache>.json}.
  */
 public final class DisplayCommand implements CommandExecutor, TabCompleter {
 
     /** Berechtigung zum Verwalten der Anzeigen. */
     public static final String PERMISSION = "bytestorm.lobby.display";
 
-    private static final String PREFIX = "<dark_aqua>ByteStorm <dark_gray>● <gray>";
     private static final List<String> SUBCOMMANDS =
             List.of("create", "delete", "move", "list", "reload");
 
     private final LobbyPlugin plugin;
+    private final Messages messages;
 
     /**
-     * @param plugin Plugin mit dem Anzeigen-Service
+     * @param plugin   Plugin mit dem Anzeigen-Service
+     * @param messages Sprachdateien
      */
-    public DisplayCommand(LobbyPlugin plugin) {
+    public DisplayCommand(LobbyPlugin plugin, Messages messages) {
         this.plugin = plugin;
+        this.messages = messages;
     }
 
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, String @NotNull [] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("Dieses Kommando braucht einen Spieler im Spiel.");
+            sender.sendMessage(messages.text("command.player-only"));
             return true;
         }
         if (!player.hasPermission(PERMISSION)) {
-            send(player, PREFIX + "<red>Dazu fehlt dir die Berechtigung.");
+            send(player, "command.no-permission", Map.of());
             return true;
         }
         if (args.length == 0) {
@@ -64,8 +69,8 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
             case "list" -> list(player, label);
             case "reload" -> {
                 plugin.displays().reload();
-                send(player, PREFIX + "<green>displays.yml neu geladen: <white>"
-                        + plugin.displays().displays().size() + "</white> Anzeigen.");
+                send(player, "command.reloaded",
+                        Map.of("count", String.valueOf(plugin.displays().displays().size())));
             }
             default -> usage(player, label);
         }
@@ -74,8 +79,7 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
 
     private void create(Player player, String label, String[] args) {
         if (args.length < 3) {
-            send(player, PREFIX + "Nutzung: /" + label
-                    + " create <gruppe> <anzeigename> [--head <textur-url>]");
+            send(player, "command.usage-create", Map.of("label", label));
             return;
         }
 
@@ -84,7 +88,7 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
         int flag = words.indexOf("--head");
         if (flag >= 0) {
             if (flag + 1 >= words.size()) {
-                send(player, PREFIX + "<red>Nach --head fehlt die Textur-URL.");
+                send(player, "command.head-missing", Map.of());
                 return;
             }
             head = words.get(flag + 1);
@@ -93,54 +97,57 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
 
         String displayName = String.join(" ", words).trim();
         if (displayName.isEmpty()) {
-            send(player, PREFIX + "<red>Der Anzeigename darf nicht leer sein.");
+            send(player, "command.name-empty", Map.of());
             return;
         }
 
         Location location = player.getLocation().clone();
         ServerDisplay display = plugin.displays().create(args[1], displayName, head, location);
-        send(player, PREFIX + "<green>Anzeige <white>#" + display.id()
-                + "</white> für Gruppe <white>" + display.group() + "</white> angelegt.");
+        send(player, "command.created", Map.of(
+                "id", String.valueOf(display.id()),
+                "group", display.group()));
     }
 
     private void delete(Player player, String label, String[] args) {
         Integer id = id(args, 1);
         if (id == null) {
-            send(player, PREFIX + "Nutzung: /" + label + " delete <id>");
+            send(player, "command.usage-delete", Map.of("label", label));
             return;
         }
         if (plugin.displays().delete(id)) {
-            send(player, PREFIX + "<green>Anzeige <white>#" + id + "</white> entfernt.");
+            send(player, "command.deleted", Map.of("id", String.valueOf(id)));
         } else {
-            send(player, PREFIX + "<red>Es gibt keine Anzeige #" + id + ".");
+            send(player, "command.missing", Map.of("id", String.valueOf(id)));
         }
     }
 
     private void move(Player player, String label, String[] args) {
         Integer id = id(args, 1);
         if (id == null) {
-            send(player, PREFIX + "Nutzung: /" + label + " move <id>");
+            send(player, "command.usage-move", Map.of("label", label));
             return;
         }
         if (plugin.displays().move(id, player.getLocation())) {
-            send(player, PREFIX + "<green>Anzeige <white>#" + id + "</white> steht jetzt hier.");
+            send(player, "command.moved", Map.of("id", String.valueOf(id)));
         } else {
-            send(player, PREFIX + "<red>Es gibt keine Anzeige #" + id + ".");
+            send(player, "command.missing", Map.of("id", String.valueOf(id)));
         }
     }
 
     private void list(Player player, String label) {
         if (plugin.displays().displays().isEmpty()) {
-            send(player, PREFIX + "<gray>Noch keine Anzeige. <white>/" + label
-                    + " create <gruppe> <name></white> legt die erste an.");
+            send(player, "command.list-empty", Map.of("label", label));
             return;
         }
         for (ServerDisplay display : plugin.displays().displays().stream()
                 .sorted(Comparator.comparingInt(ServerDisplay::id)).toList()) {
-            send(player, PREFIX + "<white>#" + display.id() + "</white> <dark_gray>● <gray>"
-                    + display.group() + " <dark_gray>● <gray>" + display.world()
-                    + " <dark_gray>@ <gray>" + Math.round(display.x()) + "/"
-                    + Math.round(display.y()) + "/" + Math.round(display.z()));
+            send(player, "command.list-row", Map.of(
+                    "id", String.valueOf(display.id()),
+                    "group", display.group(),
+                    "world", display.world(),
+                    "x", String.valueOf(Math.round(display.x())),
+                    "y", String.valueOf(Math.round(display.y())),
+                    "z", String.valueOf(Math.round(display.z()))));
         }
     }
 
@@ -156,13 +163,12 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
     }
 
     private void usage(Player player, String label) {
-        send(player, PREFIX + "Anzeigen: <white>/" + label + " create|delete|move|list|reload");
-        send(player, PREFIX + "<gray>create <gruppe> <name> [--head <url>] <dark_gray>● "
-                + "legt die Anzeige an deiner Position an");
+        send(player, "command.usage", Map.of("label", label));
+        send(player, "command.usage-help", Map.of("label", label));
     }
 
-    private void send(Player player, String message) {
-        player.sendMessage(MiniMessage.miniMessage().deserialize(message));
+    private void send(Player player, String key, Map<String, String> values) {
+        player.sendMessage(MiniMessage.miniMessage().deserialize(messages.prefixed(key, values)));
     }
 
     @Override

@@ -1,0 +1,48 @@
+{
+  "messages": {
+    "prefix": "<dark_aqua>ByteStorm <dark_gray>● <gray>",
+    "display": {
+      "offline": "<dark_gray>● <red>Offline</red>",
+      "players": "<dark_gray>● <green>%players%/%max%</green> <gray>Spieler online <dark_gray>· <gray>%servers%",
+      "players-unlimited": "<dark_gray>● <green>%players%</green> <gray>Spieler online <dark_gray>· <gray>%servers%",
+      "servers-one": "1 Server",
+      "servers": "%count% Server",
+      "hint": "<dark_gray>►▻ <gray>Klick zum Betreten <dark_gray>◅◄"
+    },
+    "join": {
+      "offline": "%server% <gray>ist gerade <red>offline</red>.",
+      "connecting": "<gray>Du wirst mit %server% <gray>verbunden<dark_gray>…",
+      "unreachable": "<red>Wechsel nicht möglich</red> <gray>— der Proxy ist nicht erreichbar."
+    },
+    "menu": {
+      "title": "<dark_aqua>%server% <dark_gray>● <gray>Server wählen",
+      "page": "<gray>Seite <white>%page%<gray>/<white>%pages%",
+      "first": "<dark_gray>Anfang",
+      "last": "<dark_gray>Ende",
+      "entry": {
+        "name": "<white>%service%",
+        "group": "<gray>Gruppe <white>%group%",
+        "players": "<gray>Spieler <white>%players%",
+        "join": "<aqua>Klicken zum Betreten"
+      }
+    },
+    "command": {
+      "player-only": "Dieses Kommando braucht einen Spieler im Spiel.",
+      "no-permission": "<red>Dazu fehlt dir die Berechtigung.</red>",
+      "usage": "Anzeigen: <white>/%label% create|delete|move|list|reload",
+      "usage-create": "Nutzung: /%label% create <gruppe> <anzeigename> [--head <textur-url>]",
+      "usage-delete": "Nutzung: /%label% delete <id>",
+      "usage-move": "Nutzung: /%label% move <id>",
+      "usage-help": "create <gruppe> <name> [--head <url>] <dark_gray>● legt die Anzeige an deiner Position an",
+      "head-missing": "<red>Nach --head fehlt die Textur-URL.</red>",
+      "name-empty": "<red>Der Anzeigename darf nicht leer sein.</red>",
+      "created": "<green>Anzeige <white>#%id%</white> für Gruppe <white>%group%</white> angelegt.</green>",
+      "deleted": "<green>Anzeige <white>#%id%</white> entfernt.</green>",
+      "missing": "<red>Es gibt keine Anzeige #%id%.</red>",
+      "moved": "<green>Anzeige <white>#%id%</white> steht jetzt hier.</green>",
+      "list-empty": "<gray>Noch keine Anzeige. <white>/%label% create <gruppe> <name></white> legt die erste an.</gray>",
+      "list-row": "<white>#%id%</white> <dark_gray>● <gray>%group% <dark_gray>● <gray>%world% <dark_gray>@ <gray>%x%/%y%/%z%",
+      "reloaded": "<green>displays.yml neu geladen: <white>%count%</white> Anzeigen.</green>"
+    }
+  }
+}

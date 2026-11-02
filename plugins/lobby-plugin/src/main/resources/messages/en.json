@@ -1,0 +1,48 @@
+{
+  "messages": {
+    "prefix": "<dark_aqua>ByteStorm <dark_gray>● <gray>",
+    "display": {
+      "offline": "<dark_gray>● <red>Offline</red>",
+      "players": "<dark_gray>● <green>%players%/%max%</green> <gray>players online <dark_gray>· <gray>%servers%",
+      "players-unlimited": "<dark_gray>● <green>%players%</green> <gray>players online <dark_gray>· <gray>%servers%",
+      "servers-one": "1 server",
+      "servers": "%count% servers",
+      "hint": "<dark_gray>►▻ <gray>Click to join <dark_gray>◅◄"
+    },
+    "join": {
+      "offline": "%server% <gray>is currently <red>offline</red>.",
+      "connecting": "<gray>Connecting you to %server%<dark_gray>…",
+      "unreachable": "<red>Switch failed</red> <gray>— the proxy is unreachable."
+    },
+    "menu": {
+      "title": "<dark_aqua>%server% <dark_gray>● <gray>Choose a server",
+      "page": "<gray>Page <white>%page%<gray>/<white>%pages%",
+      "first": "<dark_gray>Start",
+      "last": "<dark_gray>End",
+      "entry": {
+        "name": "<white>%service%",
+        "group": "<gray>Group <white>%group%",
+        "players": "<gray>Players <white>%players%",
+        "join": "<aqua>Click to join"
+      }
+    },
+    "command": {
+      "player-only": "This command needs a player in game.",
+      "no-permission": "<red>You do not have permission for that.</red>",
+      "usage": "Displays: <white>/%label% create|delete|move|list|reload",
+      "usage-create": "Usage: /%label% create <group> <display name> [--head <texture url>]",
+      "usage-delete": "Usage: /%label% delete <id>",
+      "usage-move": "Usage: /%label% move <id>",
+      "usage-help": "create <group> <name> [--head <url>] <dark_gray>● creates the display where you stand",
+      "head-missing": "<red>--head needs a texture URL.</red>",
+      "name-empty": "<red>The display name must not be empty.</red>",
+      "created": "<green>Display <white>#%id%</white> for group <white>%group%</white> created.</green>",
+      "deleted": "<green>Display <white>#%id%</white> removed.</green>",
+      "missing": "<red>There is no display #%id%.</red>",
+      "moved": "<green>Display <white>#%id%</white> now stands here.</green>",
+      "list-empty": "<gray>No displays yet. <white>/%label% create <group> <name></white> creates the first one.</gray>",
+      "list-row": "<white>#%id%</white> <dark_gray>● <gray>%group% <dark_gray>● <gray>%world% <dark_gray>@ <gray>%x%/%y%/%z%",
+      "reloaded": "<green>displays.yml reloaded: <white>%count%</white> displays.</green>"
+    }
+  }
+}
