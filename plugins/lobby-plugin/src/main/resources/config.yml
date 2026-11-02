@@ -1,0 +1,16 @@
+# Redis-Zugang der Cloud. Leer lassen heißt: aus der Umgebung lesen
+# (BYTESTORM_REDIS_ADDRESS / BYTESTORM_REDIS_PASSWORD), die der Node beim Start
+# in den Service-Ordner schreibt. Ein Eintrag hier ist nur für manuell
+# gestartete Lobby-Server nötig.
+redis:
+  address: ""
+  password: ""
+
+display:
+  # Wie oft die Service-Liste aus Redis gelesen wird. Die Hologramme selbst
+  # arbeiten mit dem Cache, damit kein Tick auf das Netzwerk wartet.
+  refreshSeconds: 2
+  # Entfernung in Blöcken, ab der die Köpfe animiert werden.
+  animationRadius: 64
+  # Sperre zwischen zwei Wechsel-Anfragen desselben Spielers.
+  switchCooldownMillis: 2000

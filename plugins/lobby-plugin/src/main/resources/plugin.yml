@@ -1,0 +1,19 @@
+name: ByteStormLobby
+version: ${version}
+main: dev.bytestorm.plugins.lobby.LobbyPlugin
+api-version: '1.21'
+authors: [ByteStorm]
+description: Server-Köpfe in der Lobby — ein Klick wechselt auf das Backend.
+# Die Bridge ist nicht Pflicht: Das Plugin liest die Registry selbst. Steht sie
+# daneben, lädt sie zuerst und der Service ist sofort bekannt.
+softdepend: [ByteStormBridge]
+commands:
+  serverdisplay:
+    description: Server-Anzeigen anlegen, verschieben und löschen.
+    usage: /serverdisplay <create|delete|list|move|reload>
+    aliases: [sd]
+    permission: bytestorm.lobby.display
+permissions:
+  bytestorm.lobby.display:
+    description: Darf Server-Anzeigen verwalten.
+    default: op
