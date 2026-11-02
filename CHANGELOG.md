@@ -6,6 +6,15 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+## [1.2.4] - 2026-11-02
+
+### Geändert
+
+- **Neuer Tag auf demselben Stand**: 1.2.4 entspricht inhaltlich 1.2.3. Der Tag
+  ist für Installationen gedacht, die noch mit dem alten Updater laufen: Der
+  übernimmt `plugins/` erst ab 1.2.3, also bringt erst ein zweites
+  `updater update` nach dem Neustart die Lobby-Jar mit.
+
 ## [1.2.3] - 2026-11-02
 
 ### Behoben
