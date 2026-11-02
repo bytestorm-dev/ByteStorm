@@ -15,6 +15,7 @@ crash-reports/
 logs/
 
 ### Generierte Verbindungsdaten (enthalten Secrets) ###
+repository.credentials
 config/cloud.json
 config/modules/rest.json
 config/modules/discord.json

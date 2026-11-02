@@ -6,6 +6,15 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+### Intern
+
+- **Module lassen sich veröffentlichen**: Jedes Modul mit eigenem Code hat jetzt
+  `maven-publish` und schreibt mit `./gradlew publish` nach
+  `dev.bytestorm:<modul>:<version>`. Ziel und Zugang stehen in
+  `repository.credentials` (gitignoriert, Aufbau in der Datei erklärt); fehlt die
+  Datei, baut alles weiter, nur `publish` entfällt. Das Repository spricht noch
+  HTTP, deshalb `isAllowInsecureProtocol`.
+
 ### Neu
 
 - **Fortschrittsbalken beim Update**: `updater update` lädt das Release-Zip
