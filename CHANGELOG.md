@@ -6,6 +6,8 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+## [1.2.5] - 2026-11-02
+
 ### Intern
 
 - **Module lassen sich veröffentlichen**: Jedes Modul mit eigenem Code hat jetzt
