@@ -11,6 +11,8 @@ import dev.bytestorm.proto.ServiceGroup;
 import dev.bytestorm.proto.ServiceInfo;
 import dev.bytestorm.proto.ServiceState;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -103,6 +105,7 @@ public final class ServiceCommandLine {
     private final BackupCommandLine backup;
     private final EulaCommandLine eula;
     private final AlertsCommandLine alerts;
+    private final Path logsDirectory;
     private final HostMetrics hostMetrics;
     private final Diagnostics diagnostics;
     private final Instant startedAt;
@@ -133,7 +136,7 @@ public final class ServiceCommandLine {
     public ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
                               TemplateCommandLine templates, PlayerCommandLine players) {
         this(controller, groups, templates, players, null, null, null, null, null, null, null, null,
-                null, Instant.now(), Clock.systemUTC());
+                null, Instant.now(), Clock.systemUTC(), null);
     }
 
     /**
@@ -151,7 +154,7 @@ public final class ServiceCommandLine {
                               ReloadCommandLine reload, ModuleCommandLine modules,
                               PlatformCommandLine platforms, UpdaterCommandLine updater) {
         this(controller, groups, templates, players, reload, modules, platforms, updater,
-                null, null, null, null, null, Instant.now(), Clock.systemUTC());
+                null, null, null, null, null, Instant.now(), Clock.systemUTC(), null);
     }
 
     /**
@@ -239,7 +242,7 @@ public final class ServiceCommandLine {
                               HostMetrics hostMetrics, Diagnostics diagnostics,
                               BackupCommandLine backup, EulaCommandLine eula) {
         this(controller, groups, templates, players, reload, modules, platforms, updater,
-                hostMetrics, diagnostics, backup, eula, null, Instant.now(), Clock.systemUTC());
+                hostMetrics, diagnostics, backup, eula, null, Instant.now(), Clock.systemUTC(), null);
     }
 
     /**
@@ -263,21 +266,50 @@ public final class ServiceCommandLine {
                               PlatformCommandLine platforms, UpdaterCommandLine updater,
                               HostMetrics hostMetrics, Diagnostics diagnostics,
                               BackupCommandLine backup, EulaCommandLine eula,
-                              AlertsCommandLine alerts) {
+                              AlertsCommandLine alerts    ) {
         this(controller, groups, templates, players, reload, modules, platforms, updater,
-                hostMetrics, diagnostics, backup, eula, alerts, Instant.now(), Clock.systemUTC());
+                hostMetrics, diagnostics, backup, eula, alerts, null);
+    }
+
+    /**
+     * @param controller    Controller-Fassade
+     * @param groups        Gruppen-Kommandos, {@code null} wenn nicht verfügbar
+     * @param templates     Template-Kommandos, {@code null} wenn nicht verfügbar
+     * @param players       Spieler-Kommandos, {@code null} wenn nicht verfügbar
+     * @param reload        {@code reload}, {@code null} wenn nicht verfügbar
+     * @param modules       Modul-Kommandos, {@code null} wenn nicht verfügbar
+     * @param platforms     Plattform-Kommandos, {@code null} wenn nicht verfügbar
+     * @param updater       Updater-Kommandos, {@code null} wenn nicht verfügbar
+     * @param hostMetrics   Host-Auslastung für {@code status}, {@code null} wenn unbekannt
+     * @param diagnostics   Prüfungen für {@code doctor}, {@code null} wenn nicht verfügbar
+     * @param backup        Sicherungen, {@code null} wenn nicht verfügbar
+     * @param eula          EULA-Verwaltung, {@code null} wenn nicht verfügbar
+     * @param alerts        aktive Alarme, {@code null} wenn nicht verfügbar
+     * @param logsDirectory Log-Verzeichnis der Cloud für die letzten Zeilen im
+     *                      Dashboard, {@code null} wenn unbekannt
+     */
+    public ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
+                              TemplateCommandLine templates, PlayerCommandLine players,
+                              ReloadCommandLine reload, ModuleCommandLine modules,
+                              PlatformCommandLine platforms, UpdaterCommandLine updater,
+                              HostMetrics hostMetrics, Diagnostics diagnostics,
+                              BackupCommandLine backup, EulaCommandLine eula,
+                              AlertsCommandLine alerts, Path logsDirectory) {
+        this(controller, groups, templates, players, reload, modules, platforms, updater,
+                hostMetrics, diagnostics, backup, eula, alerts, Instant.now(), Clock.systemUTC(),
+                logsDirectory);
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups, Instant startedAt, Clock clock) {
         this(controller, groups, null, null, null, null, null, null, null, null, null, null, null,
-                startedAt, clock);
+                startedAt, clock, null);
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
                        TemplateCommandLine templates, PlayerCommandLine players,
                        Instant startedAt, Clock clock) {
         this(controller, groups, templates, players, null, null, null, null, null, null, null, null,
-                null, startedAt, clock);
+                null, startedAt, clock, null);
     }
 
     ServiceCommandLine(ServiceController controller, GroupCommandLine groups,
@@ -286,7 +318,7 @@ public final class ServiceCommandLine {
                        PlatformCommandLine platforms, UpdaterCommandLine updater,
                        HostMetrics hostMetrics, Diagnostics diagnostics, BackupCommandLine backup,
                        EulaCommandLine eula, AlertsCommandLine alerts,
-                       Instant startedAt, Clock clock) {
+                       Instant startedAt, Clock clock, Path logsDirectory) {
         this.controller = Objects.requireNonNull(controller, "controller");
         this.groups = groups;
         this.templates = templates;
@@ -300,6 +332,7 @@ public final class ServiceCommandLine {
         this.backup = backup;
         this.eula = eula;
         this.alerts = alerts;
+        this.logsDirectory = logsDirectory;
         this.startedAt = Objects.requireNonNull(startedAt, "startedAt");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -557,7 +590,22 @@ public final class ServiceCommandLine {
                 runtime.maxMemory() / (1024 * 1024),
                 hostMetrics == null ? null : hostMetrics.cpuLoad(),
                 hostMetrics == null ? null : hostMetrics.memoryLoad(),
-                List.copyOf(rows), List.copyOf(groupRows), List.copyOf(crashRows));
+                List.copyOf(rows), List.copyOf(groupRows), List.copyOf(crashRows), recentLogs());
+    }
+
+    /**
+     * @return die letzten Zeilen aus {@code logs/cloud.log}, leer ohne Verzeichnis
+     */
+    private List<String> recentLogs() {
+        if (logsDirectory == null) {
+            return List.of();
+        }
+        try {
+            return CloudLogTail.tail(logsDirectory.resolve("cloud.log"), Dashboard.LOG_LINES);
+        } catch (IOException | RuntimeException e) {
+            // Ohne Leserecht bleibt das Panel weg, statt die Übersicht zu kippen.
+            return List.of();
+        }
     }
 
     /**

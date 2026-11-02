@@ -119,6 +119,11 @@ tasks.register<Zip>("distributionZip") {
     from(rootProject.file("LICENSE"))
     from(rootProject.file("NOTICE"))
     from(rootProject.file("CHANGELOG.md"))
+    // Das Startbanner liegt als Vorlage neben dem Jar: Der Bootstrap liest
+    // assets/banner.txt, Betreiber dürfen die Datei also einfach ersetzen (§17).
+    from(rootProject.file("assets")) {
+        into("assets")
+    }
     from(tasks.named("jar")) {
         rename { "bytestorm.jar" }
     }

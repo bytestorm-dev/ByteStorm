@@ -55,8 +55,8 @@ class ServiceScreenTest {
         }
         writer.join(5_000);
 
-        String text = output.toString(StandardCharsets.UTF_8);
-        assertTrue(text.contains("ready"), text);
+        String text = Theme.stripAnsi(output.toString(StandardCharsets.UTF_8));
+        assertTrue(text.contains("12:00:00|INFO  ready"), text);
         assertTrue(text.contains("Screen Lobby-1 beendet"), text);
         assertEquals(List.of("exec:" + controller.info.getId() + ":say hi"), controller.calls);
     }

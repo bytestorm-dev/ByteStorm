@@ -23,6 +23,9 @@ public final class Dashboard {
     /** Kürzer als das ergibt keinen Sinn und würde nur flackern. */
     public static final long MIN_INTERVAL_MILLIS = 500;
 
+    /** So viele Logzeilen zeigt das Dashboard unter den Tabellen. */
+    public static final int LOG_LINES = 8;
+
     private static final String NL = System.lineSeparator();
 
     private static final String SEPARATOR = "  ·  ";
@@ -83,12 +86,13 @@ public final class Dashboard {
      * @param services       Service-Zeilen
      * @param groupRows      Gruppen-Zeilen
      * @param crashes        letzte Crashs je Service, leer wenn keiner abstürzte
+     * @param logs           letzte Zeilen aus {@code logs/cloud.log}, leer wenn unbekannt
      */
     public record Snapshot(String uptime, int onlineServices, int totalServices, int groups,
                            List<String> degradedGroups, long usedMemoryMb, long maxMemoryMb,
                            Double cpuLoad, Double memoryLoad,
                            List<ServiceRow> services, List<GroupRow> groupRows,
-                           List<CrashRow> crashes) {
+                           List<CrashRow> crashes, List<String> logs) {
     }
 
     private Dashboard() {
@@ -146,6 +150,16 @@ public final class Dashboard {
                         row.time(), row.report());
             }
             out.append(NL).append(table.render());
+        }
+
+        if (!snapshot.logs().isEmpty()) {
+            out.append(NL).append(NL).append(Theme.heading("Letzte Logs"));
+            for (String line : snapshot.logs()) {
+                String formatted = ConsoleLine.cloudLog(line);
+                if (formatted != null) {
+                    out.append(NL).append(formatted);
+                }
+            }
         }
         return out.toString();
     }

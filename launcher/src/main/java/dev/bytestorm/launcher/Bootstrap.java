@@ -354,7 +354,9 @@ public final class Bootstrap implements AutoCloseable {
                     // Zustimmung zur Minecraft-EULA nachträglich ändern (§17).
                     new EulaCommandLine(directory),
                     // `alerts` liest denselben Zustand, den die Überwachung meldet (§20).
-                    new AlertsCommandLine(alertService::active));
+                    new AlertsCommandLine(alertService::active),
+                    // Dieselben Zeilen wie die Konsole, direkt aus logs/cloud.log (§17).
+                    layout.logs());
             log.info("Node-ServiceManager bereit (Runtime {}, Logs {}, Scaling {} s)",
                     config.runtime(), layout.logs(), config.scaling().intervalSeconds());
 
@@ -668,6 +670,8 @@ public final class Bootstrap implements AutoCloseable {
         Bootstrap bootstrap;
         try {
             Path directory = LauncherArguments.cloudDirectory(args);
+            // Drei Sekunden Vorspann aus assets/banner.txt; ohne Terminal passiert nichts.
+            Banner.show(directory);
             ensureConfigured(directory);
             bootstrap = start(directory);
         } catch (ConfigException e) {

@@ -258,7 +258,8 @@ final class ServiceScreen {
     private void printLog(String line) {
         synchronized (output) {
             PrintWriter writer = terminal.writer();
-            writer.print("\r" + line + "\r\n");
+            // Dieselbe Form wie die Konsole: Zeit|Level vor der Meldung.
+            writer.print("\r" + ConsoleLine.service(line) + "\r\n");
             renderPromptLocked();
             writer.flush();
             terminal.flush();
