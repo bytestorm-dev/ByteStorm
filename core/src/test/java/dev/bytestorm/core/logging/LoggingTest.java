@@ -105,7 +105,9 @@ class LoggingTest {
     @Test
     void consoleShowsShortTimeAndColorsTheLevel() {
         LoggerContext context = new LoggerContext();
-        Logging.configure(context, temp, Level.INFO);
+        // Farbwahl fest vorgeben: Ein CI-Runner hat kein TERM und bekäme sonst
+        // still das graue Layout, obwohl dieser Test das farbige meint.
+        Logging.configure(context, temp, Level.INFO, true);
 
         String pattern = consolePattern(context);
 
@@ -124,6 +126,18 @@ class LoggingTest {
         String rendered = layout.doLayout(event);
         assertFalse(rendered.contains("%highlight"), rendered);
         assertTrue(rendered.contains("ERROR"), rendered);
+    }
+
+    @Test
+    void consoleStaysPlainWhenColorsAreOff() {
+        LoggerContext context = new LoggerContext();
+        Logging.configure(context, temp, Level.INFO, false);
+
+        String pattern = consolePattern(context);
+
+        assertTrue(pattern.startsWith("%d{HH:mm:ss}|%-5level "), pattern);
+        assertFalse(pattern.contains("%highlight"), "ohne Farben kein Highlight: " + pattern);
+        assertFalse(pattern.contains("%logger"), "die Konsole zeigt keinen Logger-Namen: " + pattern);
     }
 
     private static String consolePattern(LoggerContext context) {

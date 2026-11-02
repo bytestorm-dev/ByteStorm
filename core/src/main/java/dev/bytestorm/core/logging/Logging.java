@@ -115,6 +115,24 @@ public final class Logging {
      * @return Pfad der aktiven Logdatei
      */
     static Path configure(LoggerContext context, Path baseDirectory, Level rootLevel) {
+        return configure(context, baseDirectory, rootLevel, ansiConsole());
+    }
+
+    /**
+     * Konfiguriert einen Logback-Kontext mit vorgegebener Farbwahl.
+     *
+     * <p>Der Schalter ist ein Parameter, damit Tests das farbige und das graue
+     * Layout prüfen können, ohne von {@code TERM} oder {@code NO_COLOR} des
+     * Rechners abzuhängen: Auf einem CI-Runner ist {@code TERM} nicht gesetzt,
+     * dort entstünde sonst still das graue Layout.
+     *
+     * @param context       Logback-Kontext
+     * @param baseDirectory Cloud-Verzeichnis, unter dem {@code logs/} liegt
+     * @param rootLevel     Level des Root-Loggers
+     * @param colored       {@code true} färbt das Level auf der Konsole
+     * @return Pfad der aktiven Logdatei
+     */
+    static Path configure(LoggerContext context, Path baseDirectory, Level rootLevel, boolean colored) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(baseDirectory, "baseDirectory");
         Objects.requireNonNull(rootLevel, "rootLevel");
@@ -143,8 +161,7 @@ public final class Logging {
             ConsoleAppender<ILoggingEvent> console = new ConsoleAppender<>();
             console.setContext(context);
             console.setName("bytestorm-console");
-            console.setEncoder(encoder(context,
-                    ansiConsole() ? CONSOLE_PATTERN_COLORED : CONSOLE_PATTERN));
+            console.setEncoder(encoder(context, colored ? CONSOLE_PATTERN_COLORED : CONSOLE_PATTERN));
             console.start();
 
             RollingFileAppender<ILoggingEvent> rolling = new RollingFileAppender<>();
