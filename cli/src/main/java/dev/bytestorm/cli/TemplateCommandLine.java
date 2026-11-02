@@ -27,7 +27,7 @@ public final class TemplateCommandLine {
             templates create <name>              leeren Template-Ordner anlegen
             templates delete <name>              Template samt Inhalt löschen
             templates copy <quelle> <ziel>       Template unter neuem Namen kopieren
-            templates sync <service> <template>  Service-Ordner ins Template spiegeln
+            templates sync <service> <template> [pfad]  Service-Ordner oder einen Teil ins Template spiegeln
             templates help                       diese Hilfe
 
             `template` ist ein Alias für `templates`.
@@ -36,7 +36,9 @@ public final class TemplateCommandLine {
             gelten für jeden Service, alle Proxy- bzw. Server-Gruppen und zusätzlich
             für Fallback-Gruppen. Eigene Templates bindet `group edit <name> --template
             <name>` an eine Gruppe. Beim `sync` bleiben Laufzeitdaten außen vor: logs/,
-            crash-reports/, Weltordner sowie Plattform- und Bridge-Jars.
+            crash-reports/, Weltordner sowie Plattform- und Bridge-Jars. Mit `pfad` wander
+            nur dieser Teil, etwa `plugins/MyPlugin` aus dem Arbeitsordner eines laufenden
+            Services — der verschwindet beim Stop, also vorher sichern.
             """;
 
     private static final String NL = System.lineSeparator();
@@ -140,10 +142,14 @@ public final class TemplateCommandLine {
 
     private String sync(String[] tokens) {
         if (tokens.length < 4) {
-            return Theme.warn("Service und Template fehlen (templates sync <service> <template>)");
+            return Theme.warn("Service und Template fehlen (templates sync <service> <template> [pfad])");
         }
-        SyncResult result = templates.sync(tokens[2], tokens[3]);
-        return Theme.ok("Ordner von '" + tokens[2] + "' nach Template '" + result.template().name()
+        String path = tokens.length > 4 ? tokens[4] : "";
+        SyncResult result = templates.sync(tokens[2], tokens[3], path);
+        String source = path.isBlank()
+                ? "Ordner von '" + tokens[2] + "'"
+                : "Pfad '" + path + "' aus '" + tokens[2] + "'";
+        return Theme.ok(source + " nach Template '" + result.template().name()
                 + "' gespiegelt: " + result.files() + " Dateien, " + size(result.template().bytes())
                 + ".") + NL + Theme.dim("Laufende Services nutzen die Änderung erst nach "
                 + "`service reapply <name>`.");

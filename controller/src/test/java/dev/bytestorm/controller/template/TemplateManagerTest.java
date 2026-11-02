@@ -129,6 +129,48 @@ class TemplateManagerTest {
     }
 
     @Test
+    void syncsOnlyASubfolderOfTheServiceIntoTheTemplate() throws Exception {
+        write(service.resolve("server.properties"), "server-port=30001");
+        write(service.resolve("plugins/MyPlugin/config.yml"), "farbe: aqua");
+        write(service.resolve("plugins/MyPlugin/logs/alt.log"), "log");
+        Files.createDirectories(templates.resolve("SERVER"));
+
+        SyncResult result = manager().sync("Lobby-1", "SERVER", "plugins/MyPlugin");
+
+        assertEquals(1, result.files(), "nur der Plugin-Ordner, ohne Laufzeitdaten");
+        assertEquals("farbe: aqua",
+                Files.readString(templates.resolve("SERVER/plugins/MyPlugin/config.yml")));
+        assertFalse(Files.exists(templates.resolve("SERVER/plugins/MyPlugin/logs")));
+        assertFalse(Files.exists(templates.resolve("SERVER/server.properties")),
+                "der Rest des Service-Ordners bleibt draußen");
+    }
+
+    @Test
+    void syncsASingleFileEvenIfItWouldNormallyBeSkipped() throws Exception {
+        write(service.resolve("eula.txt"), "eula=true");
+        Files.createDirectories(templates.resolve("SERVER"));
+
+        SyncResult result = manager().sync("Lobby-1", "SERVER", "eula.txt");
+
+        assertEquals(1, result.files());
+        assertEquals("eula=true", Files.readString(templates.resolve("SERVER/eula.txt")));
+    }
+
+    @Test
+    void syncRejectsPathsOutsideTheServiceDirectory() throws Exception {
+        Files.createDirectories(templates.resolve("SERVER"));
+        TemplateManager manager = manager();
+
+        assertThrows(IllegalArgumentException.class,
+                () -> manager.sync("Lobby-1", "SERVER", "../anderer-service"));
+        assertThrows(IllegalArgumentException.class,
+                () -> manager.sync("Lobby-1", "SERVER", "/etc/passwd"));
+        IllegalArgumentException missing = assertThrows(IllegalArgumentException.class,
+                () -> manager.sync("Lobby-1", "SERVER", "plugins/Fehlt"));
+        assertTrue(missing.getMessage().contains("plugins/Fehlt"), missing.getMessage());
+    }
+
+    @Test
     void syncNeedsAKnownServiceAndTemplate() throws Exception {
         Files.createDirectories(templates.resolve("SERVER"));
         TemplateManager manager = manager();

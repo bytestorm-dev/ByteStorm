@@ -104,6 +104,21 @@ class TemplateCommandLineTest {
     }
 
     @Test
+    void syncsASubfolderOfTheService() throws IOException {
+        write(service.resolve("plugins/MyPlugin/config.yml"), "farbe: aqua");
+        write(service.resolve("server.properties"), "server-port=30001");
+        Files.createDirectories(templates.resolve("SERVER"));
+
+        String output = cli.execute(new String[] {"templates", "sync", "Lobby-1", "SERVER",
+                "plugins/MyPlugin"});
+
+        assertTrue(output.contains("Pfad 'plugins/MyPlugin'"), output);
+        assertTrue(output.contains("1 Dateien"), output);
+        assertTrue(Files.isRegularFile(templates.resolve("SERVER/plugins/MyPlugin/config.yml")));
+        assertFalse(Files.exists(templates.resolve("SERVER/server.properties")));
+    }
+
+    @Test
     void reportsErrorsInPlainText() throws IOException {
         assertTrue(cli.execute(new String[] {"templates", "create", "Lobby Test"})
                 .startsWith("Fehler: Templatename"));

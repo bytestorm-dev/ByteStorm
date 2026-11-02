@@ -164,6 +164,30 @@ public final class TemplateManager {
      * @throws IllegalArgumentException wenn Service oder Template nicht bekannt sind
      */
     public SyncResult sync(String service, String target) {
+        return sync(service, target, "");
+    }
+
+    /**
+     * Spiegelt einen Teil des Service-Ordners in ein Template (§10).
+     *
+     * <p>Nützlich, wenn nur ein Plugin-Ordner oder eine einzelne Konfiguration aus
+     * einem laufenden Service ins Template soll — der Arbeitsordner dynamischer
+     * Services liegt unter {@code running/} und verschwindet beim Stop, muss also
+     * vorher gesichert werden. Der Pfad ist relativ zum Service-Ordner; Ziel ist
+     * derselbe Pfad im Template, damit die Ebenen weiterhin deckungsgleich sind.
+     *
+     * <p>Für Ordner gelten dieselben Ausnahmen wie beim ganzen Ordner: Laufzeitdaten
+     * ({@code logs/}, {@code crash-reports/}, {@code world*}), die Plattform-Jar und
+     * die Bridge-Jars bleiben außen vor. Eine ausdrücklich genannte Datei wird
+     * übernommen, auch wenn sie sonst übersprungen würde.
+     *
+     * @param service Service-Name
+     * @param target  Zieltemplate
+     * @param subPath Pfad innerhalb des Service-Ordners, leer für den ganzen Ordner
+     * @return Anzahl übernommener Dateien und das aktualisierte Template
+     * @throws IllegalArgumentException wenn Service, Template oder Pfad nicht passen
+     */
+    public SyncResult sync(String service, String target, String subPath) {
         Objects.requireNonNull(service, "service");
         Path template = resolve(target);
         if (!Files.isDirectory(template)) {
@@ -175,14 +199,52 @@ public final class TemplateManager {
         if (!Files.isDirectory(directory)) {
             throw new IllegalArgumentException("Service-Ordner fehlt: " + directory);
         }
+
+        Path relative = relativePath(subPath);
+        Path source = relative == null ? directory : directory.resolve(relative);
+        if (relative != null && !Files.exists(source)) {
+            throw new IllegalArgumentException("Pfad '" + subPath + "' gibt es im Service-Ordner von '"
+                    + service + "' nicht");
+        }
+        Path destination = relative == null ? template : template.resolve(relative);
+
         try {
-            int files = copyTree(directory, template, TemplateManager::skipOnSync);
-            log.info("Service-Ordner von '{}' nach Template '{}' gespiegelt ({} Dateien)",
-                    service, target, files);
+            int files;
+            if (Files.isDirectory(source)) {
+                Files.createDirectories(destination);
+                files = copyTree(source, destination,
+                        relative == null ? Path.of("") : relative, TemplateManager::skipOnSync);
+            } else {
+                Files.createDirectories(destination.getParent());
+                Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.COPY_ATTRIBUTES);
+                files = 1;
+            }
+            log.info("Service-Ordner von '{}'{} nach Template '{}' gespiegelt ({} Dateien)",
+                    service, relative == null ? "" : " (" + relative + ")", target, files);
             return new SyncResult(files, entry(template));
         } catch (IOException e) {
             throw new UncheckedIOException("Service-Ordner von '" + service + "' nicht kopierbar", e);
         }
+    }
+
+    /**
+     * Prüft einen Pfad innerhalb des Service-Ordners.
+     *
+     * @param subPath Pfad aus der Kommandozeile, darf leer sein
+     * @return normalisierter relativer Pfad oder {@code null} für den ganzen Ordner
+     * @throws IllegalArgumentException bei absoluten Pfaden und solchen, die herausführen
+     */
+    private static Path relativePath(String subPath) {
+        if (subPath == null || subPath.isBlank() || subPath.trim().equals(".")) {
+            return null;
+        }
+        Path path = Path.of(subPath.trim().replace('\\', '/')).normalize();
+        if (path.isAbsolute() || path.toString().isEmpty() || path.getName(0).toString().equals("..")) {
+            throw new IllegalArgumentException("Pfad muss innerhalb des Service-Ordners liegen: '"
+                    + subPath + "'");
+        }
+        return path;
     }
 
     /**
@@ -217,8 +279,16 @@ public final class TemplateManager {
             // Gehört zur Vorbereitung, nicht zur Konfiguration des Services.
             return true;
         }
+        // Laufzeitordner bleiben auf jeder Ebene draußen: Ein Plugin bringt seine
+        // eigenen logs/ mit, und die gehören so wenig ins Template wie die des
+        // Services. Weltordner entstehen nur im Wurzelordner.
+        for (int i = 0; i < relative.getNameCount(); i++) {
+            if (RUNTIME_DIRECTORIES.contains(relative.getName(i).toString())) {
+                return true;
+            }
+        }
         String first = relative.getName(0).toString();
-        if (RUNTIME_DIRECTORIES.contains(first) || first.startsWith("world")) {
+        if (first.startsWith("world")) {
             return true;
         }
         String name = relative.getFileName().toString();
