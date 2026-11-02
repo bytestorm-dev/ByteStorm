@@ -13,7 +13,7 @@
   <a href="https://github.com/bytestorm-dev/ByteStorm/actions/workflows/ci.yml"><img src="https://github.com/bytestorm-dev/ByteStorm/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
   <img src="https://img.shields.io/badge/Java-26-orange" alt="Java 26">
   <img src="https://img.shields.io/badge/Lizenz-Apache--2.0-blue" alt="Apache-2.0">
-  <img src="https://img.shields.io/badge/Version-1.0.1-informational" alt="Version 1.0.1">
+  <img src="https://img.shields.io/badge/Version-1.1.0-informational" alt="Version 1.1.0">
 </p>
 
 > **Ein Host, ein Prozess, ein Netz.** ByteStorm nimmt Spieler an einem Proxy an,
@@ -89,7 +89,7 @@ entscheiden — danach läuft das Netz. 🧙
 ### 🏁 Erster Start
 
 ```bash
-unzip bytestorm-1.0.1.zip -d /srv/bytestorm
+unzip bytestorm-1.1.0.zip -d /srv/bytestorm
 cd /srv/bytestorm
 java -jar bytestorm.jar
 ```
@@ -113,11 +113,11 @@ $ java -jar bytestorm.jar
 16:42:02|INFO  Redis verbunden: RedisSettings[address=redis://127.0.0.1:6379, password=***]
 16:42:03|INFO  Node-ServiceManager bereit (Runtime PROCESS, Logs /srv/bytestorm/logs, Scaling 3 s)
 16:42:03|INFO  ByteStorm bereit — Strg+C beendet die Cloud
-bytestorm@1.0.1» status
+bytestorm@1.1.0» status
 ```
 
 Jede Zeile trägt Uhrzeit und Level (`16:42:01|INFO`, `|WARN`, `|ERROR` — farbig am
-Terminal), den Logger-Namen nur in `logs/cloud.log`. Der Prompt ist `bytestorm@1.0.1» `;
+Terminal), den Logger-Namen nur in `logs/cloud.log`. Der Prompt ist `bytestorm@1.1.0» `;
 außerhalb eines Release-Jars steht dort `bytestorm@dev» `.
 
 ### ⌨️ Die wichtigsten Kommandos

@@ -6,6 +6,30 @@ Alle nennenswerten Änderungen an ByteStorm. Aufbau nach
 
 ## [Unveröffentlicht]
 
+## [1.1.0] - 2026-11-02
+
+### Neu
+
+- **Banner mit Blitz**: Das Startlogo aus `assets/banner.txt` steht vom ersten Bild
+  an still — kein Zeichen-für-Zeichen-Aufdecken mehr. Die Front ist dunkles Aqua
+  (`#00afaf`), der Schatten zwei Stufen dunkler (`#008787`); rechts schlägt ein
+  Blitz ein, flackert weiß auf und beruhigt sich auf Gelb. Nach drei Sekunden räumt
+  sich der Block weg, das Start-Log beginnt oben.
+
+### Geändert
+
+- **README**: Übersichtstabelle, Emoji-Abschnitte und ein getrennter Schnellstart
+  (Voraussetzungen, erster Start, Konsole, Kommandos); die Banner-Vorlage ist
+  dokumentiert.
+
+### Intern
+
+- **Repository umgezogen**: Alle Verweise zeigen auf `bytestorm-dev/ByteStorm`,
+  inklusive der Release-Abfrage des Updaters — ohne Anpassung hätte er nach dem
+  Umzug keine Updates mehr gefunden.
+- **Logging-Test ohne Umgebungsabhängigkeit**: Die Farbwahl ist ein Parameter;
+  auf einem Runner ohne `TERM` prüft der Test beide Layouts.
+
 ## [1.0.1] - 2026-11-02
 
 ### Neu
@@ -109,6 +133,7 @@ einer prüfbaren Auslieferung.
   erst beim Verbindungsversuch eines Spielers auf; `doctor` erkennt es,
   `doctor --fix` setzt Template und Secret neu.
 
-[Unveröffentlicht]: https://github.com/bytestorm-dev/ByteStorm/compare/v1.0.1...HEAD
+[Unveröffentlicht]: https://github.com/bytestorm-dev/ByteStorm/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/bytestorm-dev/ByteStorm/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/bytestorm-dev/ByteStorm/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/bytestorm-dev/ByteStorm/releases/tag/v1.0.0
